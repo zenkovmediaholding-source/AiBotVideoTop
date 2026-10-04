@@ -12,7 +12,8 @@
     "@gradio/client": "^2.7.1",
     "@supabase/supabase-js": "^2.57.4",
     "dotenv": "^16.4.5",
-    "grammy": "^1.38.4"
+    "grammy": "^1.38.4",
+    "ffmpeg-static": "^5.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
