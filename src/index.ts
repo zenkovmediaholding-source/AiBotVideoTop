@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { createServer } from "node:http";
-import { Bot, InlineKeyboard, InputFile, type Context } from "grammy";
+import { Bot, InlineKeyboard, InputFile, webhookCallback, type Context } from "grammy";
 import { DemoProvider } from "./providers/demo.js";
 import { ComfyUIProvider } from "./providers/comfyui.js";
 import { HuggingFaceProvider } from "./providers/huggingface.js";
@@ -62,5 +62,22 @@ bot.callbackQuery("home",async ctx=>{await ctx.answerCallbackQuery();await home(
 bot.catch(err=>console.error("Bot error:",err.error));
 
 const port=Number(process.env.PORT??3000);
-createServer((req,res)=>{if(req.url==="/health"){res.writeHead(200,{"content-type":"text/plain"});res.end("AiVideoTop OK");return;}res.writeHead(200,{"content-type":"text/plain"});res.end("AiVideoTop");}).listen(port,"0.0.0.0",()=>console.log("AiVideoTop health server listening on "+port));
-bot.start({onStart:info=>console.log("AiVideoTop started as @"+info.username)});
+const botMode=process.env.BOT_MODE??"polling";
+const publicUrl=process.env.PUBLIC_URL?.replace(/\\/$/,"");
+const webhookPath="/telegram/webhook";
+const handleWebhook=webhookCallback(bot,"http");
+const server=createServer(async(req,res)=>{
+ if(req.url==="/health"){res.writeHead(200,{"content-type":"text/plain"});res.end("AiVideoTop OK");return;}
+ if(botMode==="webhook"&&req.method==="POST"&&req.url===webhookPath){await handleWebhook(req,res);return;}
+ res.writeHead(200,{"content-type":"text/plain"});res.end("AiVideoTop");
+});
+server.listen(port,"0.0.0.0",async()=>{
+ console.log("AiVideoTop health server listening on "+port);
+ if(botMode==="webhook"){
+  if(!publicUrl) throw new Error("PUBLIC_URL is required in webhook mode");
+  await bot.api.setWebhook(publicUrl+webhookPath);
+  console.log("AiVideoTop webhook enabled at "+publicUrl+webhookPath);
+ }else{
+  await bot.start({onStart:info=>console.log("AiVideoTop started as @"+info.username)});
+ }
+});
