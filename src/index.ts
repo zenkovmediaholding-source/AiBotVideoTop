@@ -44,14 +44,15 @@ bot.callbackQuery("generate",async ctx=>{
  const s=sessions.get(ctx.from.id);
  if(!s?.prompt){await ctx.reply("Сначала нужен промпт.");return;}
  const u=await ensureUser(ctx);
+ const prompt=s.prompt;
  await ctx.reply("⏳ <b>Запускаю генерацию...</b>\\n\\nЭто может занять несколько минут на бесплатном GPU.",{parse_mode:"HTML"});
  const userId=ctx.from.id;
  void (async()=>{
   try{
-   if(db&&u)await db.createGeneration(u.id,"video",s.prompt,process.env.AI_PROVIDER??"demo");
+   if(db&&u)await db.createGeneration(u.id,"video",prompt,process.env.AI_PROVIDER??"demo");
    let imageBuffer:Uint8Array|undefined;
    if(s.imageFileId){const file=await bot.api.getFile(s.imageFileId);if(file.file_path){const media=await fetch("https://api.telegram.org/file/bot"+token+"/"+file.file_path);if(media.ok)imageBuffer=new Uint8Array(await media.arrayBuffer());}}
-   const result=await provider.generateVideo({prompt:s.prompt,ratio:s.ratio,duration:s.duration,imageBuffer});
+   const result=await provider.generateVideo({prompt,ratio:s.ratio,duration:s.duration,imageBuffer});
    if(result.buffer)await ctx.replyWithVideo(new InputFile(result.buffer,result.filename??"aivideotop.mp4"));
    else if(result.url)await ctx.replyWithVideo(result.url);
    else await ctx.reply("❌ <b>Генератор сейчас недоступен</b>\\n\\n"+escapeHtml(result.message??"AI-провайдер ещё не подключён."),{parse_mode:"HTML"});
