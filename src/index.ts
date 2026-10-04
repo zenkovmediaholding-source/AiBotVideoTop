@@ -4,6 +4,7 @@ import { Bot, InlineKeyboard, InputFile, webhookCallback, type Context } from "g
 import { DemoProvider } from "./providers/demo.js";
 import { ComfyUIProvider } from "./providers/comfyui.js";
 import { HuggingFaceProvider } from "./providers/huggingface.js";
+import { ReplicateProvider } from "./providers/replicate.js";
 import { Database } from "./db.js";
 import type { VideoProvider } from "./providers/types.js";
 
@@ -12,6 +13,7 @@ if(!token) throw new Error("TELEGRAM_BOT_TOKEN is required");
 const bot=new Bot(token);
 
 const provider:VideoProvider=
+ process.env.AI_PROVIDER==="replicate" ? new ReplicateProvider() :
  process.env.AI_PROVIDER==="huggingface" ? new HuggingFaceProvider() :
  process.env.AI_PROVIDER==="comfyui" ? new ComfyUIProvider(process.env.COMFYUI_URL??"http://127.0.0.1:8188") :
  new DemoProvider();
@@ -45,18 +47,18 @@ bot.callbackQuery("generate",async ctx=>{
  if(!s?.prompt){await ctx.reply("Сначала нужен промпт.");return;}
  const u=await ensureUser(ctx);
  const prompt=s.prompt;
- await ctx.reply("⏳ <b>Запускаю генерацию...</b>\\n\\nЭто может занять несколько минут на бесплатном GPU.",{parse_mode:"HTML"});
+ await ctx.reply("⏳ <b>Запускаю генерацию...</b>\\n\\nЭто может занять несколько минут.",{parse_mode:"HTML"});
  const userId=ctx.from.id;
  void (async()=>{
   try{
-   if(db&&u)await db.createGeneration(u.id,"video",prompt,process.env.AI_PROVIDER??"demo");
+   if(db&&u)await db.createGeneration(u.id,"video",prompt,process.env.AI_PROVIDER??"replicate");
    let imageBuffer:Uint8Array|undefined;
    if(s.imageFileId){const file=await bot.api.getFile(s.imageFileId);if(file.file_path){const media=await fetch("https://api.telegram.org/file/bot"+token+"/"+file.file_path);if(media.ok)imageBuffer=new Uint8Array(await media.arrayBuffer());}}
    const result=await provider.generateVideo({prompt,ratio:s.ratio,duration:s.duration,imageBuffer});
    if(result.buffer)await ctx.replyWithVideo(new InputFile(result.buffer,result.filename??"aivideotop.mp4"));
    else if(result.url)await ctx.replyWithVideo(result.url);
    else await ctx.reply("❌ <b>Генератор сейчас недоступен</b>\\n\\n"+escapeHtml(result.message??"AI-провайдер ещё не подключён."),{parse_mode:"HTML"});
-  }catch(e){console.error("[generate] error:",e);await ctx.reply("❌ Ошибка генерации. Проверь подключение бесплатного GPU-провайдера.");}
+  }catch(e){console.error("[generate] error:",e);await ctx.reply("❌ Ошибка генерации. Проверь платный AI-провайдер.");}
   finally{sessions.delete(userId);}
  })();
 });
