@@ -153,3 +153,5 @@ export class HuggingFaceProvider implements VideoProvider {
       await fs.rm(outputPath, { force: true }).catch(() => {});
     }
   }
+
+}
