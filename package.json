@@ -1,6 +1,20 @@
 {
-  "name":"aivideotop-bot","version":"0.2.0","private":true,"type":"module",
-  "scripts":{"dev":"tsx src/index.ts","build":"tsc","start":"node dist/index.js"},
-  "dependencies":{"@runwayml/sdk":"^2.5.0","dotenv":"^16.4.5","grammy":"^1.38.4"},
-  "devDependencies":{"@types/node":"^22.10.2","tsx":"^4.19.2","typescript":"^5.7.2"}
+  "name": "aivideotop-bot",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "grammy": "^1.38.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
 }
