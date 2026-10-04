@@ -2,7 +2,7 @@ import { Client } from "@gradio/client";
 import type { VideoProvider, VideoRequest, GenerationResult } from "./types.js";
 
 const SPACE_ID = "multimodalart/self-forcing";
-const ENDPOINT = process.env.HF_ENDPOINT?.trim() || "/video_generation_handler_example";
+const ENDPOINT = "/video_generation_handler_example";
 
 type ApiInfo = {
   named_endpoints?: Record<string, { parameters?: unknown[] }>;
