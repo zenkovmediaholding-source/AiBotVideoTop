@@ -5,10 +5,7 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { VideoProvider, VideoRequest, GenerationResult } from "./types.js";
-
 const SPACE_ID = "multimodalart/self-forcing";
-const ENDPOINT = "/video_generation_handler_example";
-
 type ApiInfo = {
   named_endpoints?: Record<string, { parameters?: unknown[] }>;
 };
