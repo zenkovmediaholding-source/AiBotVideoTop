@@ -5,6 +5,7 @@ import { DemoProvider } from "./providers/demo.js";
 import { ComfyUIProvider } from "./providers/comfyui.js";
 import { HuggingFaceProvider } from "./providers/huggingface.js";
 import { ReplicateProvider } from "./providers/replicate.js";
+import { ReplicatePhotoProvider } from "./providers/replicate-photo.js";
 import { Database } from "./db.js";
 import type { VideoProvider } from "./providers/types.js";
 
@@ -19,6 +20,7 @@ const provider:VideoProvider=
  new DemoProvider();
 
 const db=process.env.SUPABASE_URL&&process.env.SUPABASE_SERVICE_ROLE_KEY?new Database():null;
+const photoProvider=new ReplicatePhotoProvider();
 type Session={mode:"video"|"photo"|"reference";ratio:string;duration:number;prompt?:string;imageFileId?:string};
 const sessions=new Map<number,Session>();
 const escapeHtml=(value:string)=>value.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -26,8 +28,9 @@ const safeAnswer=async(ctx:Context)=>{try{await ctx.answerCallbackQuery();}catch
 const main=()=>new InlineKeyboard().text("🎬 AI Видео","video").text("📸 AI Фото","photo").row().text("🧍 Видео со мной","reference").text("✨ Референс","reference").row().text("💳 Кредиты","credits").text("📁 История","history").row().text("⚙️ Настройки","settings");
 const back=()=>new InlineKeyboard().text("⬅️ Назад","home");
 const videoFormats=()=>new InlineKeyboard().text("📱 9:16","ratio_916").text("🖥 16:9","ratio_169").row().text("◼️ 1:1","ratio_11").row().text("⬅️ Назад","home");
-const videoDuration=()=>new InlineKeyboard().text("5 сек","dur_5").text("8 сек","dur_8").row().text("⬅️ Назад","home");
+const videoDuration=()=>new InlineKeyboard().text("5 сек","dur_5").row().text("⬅️ Назад","home");
 const confirm=()=>new InlineKeyboard().text("🚀 Создать","generate").text("✏️ Изменить","edit_prompt").row().text("⬅️ Назад","home");
+const confirmPhoto=()=>new InlineKeyboard().text("🪄 Создать фото","generate_photo").text("✏️ Изменить","edit_photo").row().text("⬅️ Назад","home");
 
 async function ensureUser(ctx:Context){const u=ctx.from;if(!u||!db)return null;return db.upsertUser(u.id,u.username,u.first_name);}
 async function home(ctx:Context){await ensureUser(ctx);await ctx.reply("⚡️ <b>AiVideoTop</b>\n\nТвоя AI-студия для фото и видео.\n\nВыбери, что создать:",{parse_mode:"HTML",reply_markup:main()});}
@@ -41,7 +44,8 @@ bot.callbackQuery(/dur_(.+)/,async ctx=>{await safeAnswer(ctx);const s=sessions.
 bot.on("message:photo",async ctx=>{const s=sessions.get(ctx.from.id);if(!s||s.mode!=="reference"){await ctx.reply("Сначала выбери «🧍 Видео со мной».");return;}const photo=ctx.message.photo.at(-1);if(photo){s.imageFileId=photo.file_id;sessions.set(ctx.from.id,s);await ctx.reply("✅ Фото получено. Теперь напиши сцену для видео.",{reply_markup:back()});}});
 bot.on("message:text",async ctx=>{const prompt=ctx.message.text.trim();if(prompt.startsWith("/"))return;const s=sessions.get(ctx.from.id);if(!s){await home(ctx);return;}if(s.mode==="photo"){await ctx.reply("📸 Фото пока не подключено. Выбери 🎬 AI Видео.");return;}s.prompt=prompt;sessions.set(ctx.from.id,s);const mode=s.mode==="video"?"AI Видео":"Видео со мной";await ctx.reply("📝 <b>Проверь заказ</b>\n\n<b>Режим:</b> "+mode+"\n<b>Формат:</b> "+s.ratio+"\n<b>Длительность:</b> "+s.duration+" сек\n\n<b>Промпт:</b> "+escapeHtml(prompt.slice(0,700)),{parse_mode:"HTML",reply_markup:confirm()});});
 bot.callbackQuery("edit_prompt",async ctx=>{await safeAnswer(ctx);await ctx.reply("✏️ Напиши новый промпт:",{reply_markup:back()});});
-bot.callbackQuery("generate",async ctx=>{
+bot.callbackQuery("edit_photo",async ctx=>{await safeAnswer(ctx);await ctx.reply("✏️ Напиши новый промпт для фото:",{reply_markup:back()});});
+bot.callbackQuery("generate_photo",async ctx=>{\n await safeAnswer(ctx);\n const s=sessions.get(ctx.from.id);\n if(!s?.prompt||s.mode!==\"photo\"){await ctx.reply(\"Сначала выбери 📸 AI Фото и напиши промпт.\");return;}\n const u=await ensureUser(ctx);\n const prompt=s.prompt;\n await ctx.reply(\"⏳ <b>Создаю фото...</b>\\n\\nОбычно это занимает несколько секунд.\",{parse_mode:\"HTML\"});\n const userId=ctx.from.id;\n void (async()=>{\n  try{\n   if(db&&u)await db.createGeneration(u.id,\"photo\",prompt,\"replicate\");\n   const result=await photoProvider.generatePhoto({prompt,ratio:s.ratio});\n   if(result.buffer)await ctx.replyWithPhoto(new InputFile(result.buffer,result.filename??\"aivideotop.webp\"));\n   else if(result.url)await ctx.replyWithPhoto(result.url);\n   else await ctx.reply(\"❌ <b>Фоторедактор сейчас недоступен</b>\\n\\n\"+escapeHtml(result.message??\"AI-провайдер недоступен.\"),{parse_mode:\"HTML\"});\n  }catch(e){console.error(\"[generate-photo] error:\",e);await ctx.reply(\"❌ Ошибка генерации фото.\");}\n  finally{sessions.delete(userId);}\n })();\n});\nbot.callbackQuery("generate",async ctx=>{
  await safeAnswer(ctx);
  const s=sessions.get(ctx.from.id);
  if(!s?.prompt){await ctx.reply("Сначала нужен промпт.");return;}
