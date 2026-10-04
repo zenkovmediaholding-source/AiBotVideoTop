@@ -1,5 +1,5 @@
 import { Client } from "@gradio/client";
-import ffmpegPath from "ffmpeg-static";
+import ffmpegPathModule from "ffmpeg-static";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
@@ -77,13 +77,15 @@ async function extractMedia(data: unknown): Promise<{ buffer: Uint8Array; filena
   return result;
 }
 
+const ffmpegPath = ffmpegPathModule as unknown as string | null;
+
 function runFfmpeg(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!ffmpegPath) {
       reject(new Error("ffmpeg binary is unavailable"));
       return;
     }
-    const child = spawn(ffmpegPath, args, { stdio: ["ignore", "ignore", "pipe"] });
+    const child = spawn(ffmpegPath, args, { stdio: "pipe" });
     let stderr = "";
     child.stderr.on("data", chunk => { stderr += String(chunk); });
     child.on("error", reject);
