@@ -1,4 +1,4 @@
-import type { GenerationResult } from "./providers/types.js";
+import type { GenerationResult } from "./types.js";
 
 const REPLICATE_API = "https://api.replicate.com/v1";
 const MODEL = "black-forest-labs/flux-schnell";
