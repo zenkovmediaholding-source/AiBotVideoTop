@@ -20,7 +20,7 @@ const db=process.env.SUPABASE_URL&&process.env.SUPABASE_SERVICE_ROLE_KEY?new Dat
 type Session={mode:"video"|"photo"|"reference";ratio:string;duration:number;prompt?:string;imageFileId?:string};
 const sessions=new Map<number,Session>();
 const escapeHtml=(value:string)=>value.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-const safeAnswer=async(ctx:Context)=>{try{await safeAnswer(ctx);}catch(e){const message=e instanceof Error?e.message:String(e);if(!message.includes("query is too old")&&!message.includes("query ID is invalid"))console.error("Callback answer error:",e);}};
+const safeAnswer=async(ctx:Context)=>{try{await ctx.answerCallbackQuery();}catch(e){const message=e instanceof Error?e.message:String(e);if(!message.includes("query is too old")&&!message.includes("query ID is invalid"))console.error("Callback answer error:",e);}};
 const main=()=>new InlineKeyboard().text("🎬 AI Видео","video").text("📸 AI Фото","photo").row().text("🧍 Видео со мной","reference").text("✨ Референс","reference").row().text("💳 Кредиты","credits").text("📁 История","history").row().text("⚙️ Настройки","settings");
 const back=()=>new InlineKeyboard().text("⬅️ Назад","home");
 const videoFormats=()=>new InlineKeyboard().text("📱 9:16","ratio_916").text("🖥 16:9","ratio_169").row().text("◼️ 1:1","ratio_11").row().text("⬅️ Назад","home");
