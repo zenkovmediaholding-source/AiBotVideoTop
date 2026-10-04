@@ -70,7 +70,7 @@ const port=Number(process.env.PORT??3000);
 const botMode=process.env.BOT_MODE??"polling";
 const publicUrl=process.env.PUBLIC_URL?.replace(/\/$/,"");
 const webhookPath="/telegram/webhook";
-const handleWebhook=webhookCallback(bot,"http");
+const handleWebhook=webhookCallback(bot,"http",{timeoutMilliseconds:9000});
 const server=createServer(async(req,res)=>{
  if(req.url==="/health"){res.writeHead(200,{"content-type":"text/plain"});res.end("AiVideoTop OK");return;}
  if(botMode==="webhook"&&req.method==="POST"&&req.url===webhookPath){await handleWebhook(req,res);return;}
