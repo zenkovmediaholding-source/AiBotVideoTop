@@ -26,7 +26,24 @@ export class ReplicateProvider implements VideoProvider {
     const token = process.env.REPLICATE_API_TOKEN?.trim();
     if (!token) return { status: "unavailable", message: "Replicate не настроен: добавь REPLICATE_API_TOKEN в Render." };
 
-    const payload: Record<string, unknown> = { input: {\n      prompt: input.prompt,\n      aspect_ratio: aspectRatio(input.ratio),\n      prompt_enhance: true,\n      frame_interpolation: true,\n      vibe_style: "None",\n      lighting_style: "None",\n      shot_type_style: "None",\n      color_theme_style: "None",\n    } };\n    const videoInput = payload.input as Record<string, unknown>;\n    if (input.imageBuffer?.byteLength) {\n      videoInput.image = "data:image/jpeg;base64," + Buffer.from(input.imageBuffer).toString("base64");\n    }
+    const payload: Record<string, unknown> = {
+      input: {
+        prompt: input.prompt,
+        aspect_ratio: aspectRatio(input.ratio),
+        prompt_enhance: true,
+        frame_interpolation: true,
+        vibe_style: "None",
+        lighting_style: "None",
+        shot_type_style: "None",
+        color_theme_style: "None",
+      },
+    };
+    const videoInput = payload.input as Record<string, unknown>;
+    if (input.imageBuffer?.byteLength) {
+      videoInput.image =
+        "data:image/jpeg;base64," +
+        Buffer.from(input.imageBuffer).toString("base64");
+    }
 
     console.log("[replicate] starting " + MODEL);
     const created = await fetch(REPLICATE_API + "/models/" + MODEL + "/predictions", {
