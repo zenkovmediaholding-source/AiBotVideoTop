@@ -158,3 +158,4 @@ export class HuggingFaceProvider implements VideoProvider {
   }
   }
 }
+}
