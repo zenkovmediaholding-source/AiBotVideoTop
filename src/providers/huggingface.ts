@@ -111,7 +111,14 @@ export class HuggingFaceProvider implements VideoProvider {
     this.clientPromise = Client.connect(SPACE_ID, token ? { token } : undefined);
   }
 
-  async diagnose() {\n    const client = await this.clientPromise;\n    const info = await client.view_api() as ApiInfo;\n    const endpoint = info.named_endpoints?.["/generate"];\n    return endpoint?.parameters?.map(p => ({ name: nameOf(p), label: p.label, component: p.component, type: p.type, default: p.default, choices: p.choices })) ?? [];\n  }\n\n  async generateVideo(input: VideoRequest): Promise<GenerationResult> {
+  async diagnose() {
+    const client = await this.clientPromise;
+    const info = await client.view_api() as ApiInfo;
+    const endpoint = info.named_endpoints?.["/generate"];
+    return endpoint?.parameters?.map(p => ({ name: nameOf(p), label: p.label, component: p.component, type: p.type, default: p.default, choices: p.choices })) ?? [];
+  }
+
+  async generateVideo(input: VideoRequest): Promise<GenerationResult> {
     const client = await this.clientPromise;
     const info = await client.view_api() as ApiInfo;
     const endpoint = info.named_endpoints?.["/generate"];
