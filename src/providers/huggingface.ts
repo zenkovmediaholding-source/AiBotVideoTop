@@ -1,13 +1,8 @@
 import { Client } from "@gradio/client";
-import ffmpegPathModule from "ffmpeg-static";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { spawn } from "node:child_process";
-import { join } from "node:path";
 import type { VideoProvider, VideoRequest, GenerationResult } from "./types.js";
 
 const SPACE_ID = "multimodalart/self-forcing";
-const ENDPOINT = process.env.HF_ENDPOINT?.trim() || "/video_generation_handler_streaming";
+const ENDPOINT = process.env.HF_ENDPOINT?.trim() || "/video_generation_handler_example";
 
 type ApiInfo = {
   named_endpoints?: Record<string, { parameters?: unknown[] }>;
@@ -40,8 +35,8 @@ async function toBuffer(value: unknown): Promise<{ buffer: Uint8Array; filename:
     if (!r.ok) throw new Error(`Failed to fetch generated media: ${r.status}`);
     return {
       buffer: new Uint8Array(await r.arrayBuffer()),
-      filename: value.endsWith(".ts") ? "chunk.ts" : "aivideotop.mp4",
-      mimeType: r.headers.get("content-type") ?? (value.endsWith(".ts") ? "video/mp2t" : "video/mp4")
+      filename: value.endsWith(".mp4") ? "aivideotop.mp4" : "aivideotop.bin",
+      mimeType: r.headers.get("content-type") ?? (value.endsWith(".mp4") ? "video/mp4" : undefined)
     };
   }
 
@@ -54,8 +49,8 @@ async function toBuffer(value: unknown): Promise<{ buffer: Uint8Array; filename:
 
   return {
     buffer: new Uint8Array(await r.arrayBuffer()),
-    filename: value.orig_name ?? value.name ?? (url.endsWith(".ts") ? "chunk.ts" : "chunk.mp4"),
-    mimeType: value.mime_type ?? r.headers.get("content-type") ?? (url.endsWith(".ts") ? "video/mp2t" : "video/mp4")
+    filename: value.orig_name ?? value.name ?? "aivideotop.mp4",
+    mimeType: value.mime_type ?? r.headers.get("content-type") ?? "video/mp4"
   };
 }
 
@@ -77,25 +72,6 @@ async function extractMedia(data: unknown): Promise<{ buffer: Uint8Array; filena
   return result;
 }
 
-const ffmpegPath = ffmpegPathModule as unknown as string | null;
-
-function runFfmpeg(args: string[]): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (!ffmpegPath) {
-      reject(new Error("ffmpeg binary is unavailable"));
-      return;
-    }
-    const child = spawn(ffmpegPath, args, { stdio: "pipe" });
-    let stderr = "";
-    child.stderr.on("data", chunk => { stderr += String(chunk); });
-    child.on("error", reject);
-    child.on("close", code => {
-      if (code === 0) resolve();
-      else reject(new Error(`ffmpeg exited with code ${code}: ${stderr.slice(-1500)}`));
-    });
-  });
-}
-
 export class HuggingFaceProvider implements VideoProvider {
   private clientPromise: ReturnType<typeof Client.connect>;
 
@@ -115,87 +91,29 @@ export class HuggingFaceProvider implements VideoProvider {
 
   async generateVideo(input: VideoRequest): Promise<GenerationResult> {
     const client = await this.clientPromise;
-    const job = client.submit(ENDPOINT, [input.prompt, -1, 15]);
-    const files: { buffer: Uint8Array; filename: string; mimeType?: string }[] = [];
-    const seen = new Set<string>();
+    console.log(`[hf] generating final MP4 ${SPACE_ID}${ENDPOINT}`);
 
-    console.log(`[hf] streaming ${SPACE_ID}${ENDPOINT}`);
-
-    for await (const message of job) {
-      if (message.type === "status") {
-        const status = message as { stage?: string; message?: string };
-        console.log(`[hf] status: ${status.stage ?? "unknown"} ${status.message ?? ""}`);
-        if (status.stage === "error") {
-          throw new Error(status.message || "Hugging Face generator returned an error");
-        }
-        continue;
-      }
-
-      if (message.type === "data") {
-        const media = await extractMedia(message.data);
-        for (const item of media) {
-          const key = `${item.filename}:${item.buffer.byteLength}:${item.buffer[0] ?? 0}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            files.push(item);
-            console.log(`[hf] received chunk ${files.length}: ${item.filename} (${item.buffer.byteLength} bytes)`);
-          }
-        }
-      }
-    }
+    const result = await client.predict(ENDPOINT, [input.prompt, -1, 15]) as { data?: unknown };
+    const files = await extractMedia(result?.data);
 
     if (!files.length) {
-      throw new Error("Hugging Face Self-Forcing returned no video chunks");
+      console.error("[hf] final endpoint returned:", JSON.stringify(result?.data));
+      throw new Error("Hugging Face Self-Forcing returned no final video file");
     }
 
-    const workDir = await mkdtemp(join(tmpdir(), "aivideotop-"));
-    try {
-      const inputPath = join(workDir, "input.mp4");
-      const mp4Path = join(workDir, "output.mp4");
-      const mp4Files = files.filter(file =>
-        file.filename.toLowerCase().endsWith(".mp4") ||
-        file.mimeType?.toLowerCase().includes("mp4")
-      );
-      const tsFiles = files.filter(file =>
-        file.filename.toLowerCase().endsWith(".ts") ||
-        file.mimeType?.toLowerCase().includes("mpegts")
-      );
+    const video = files.find(file =>
+      file.mimeType?.toLowerCase().includes("video") ||
+      file.filename.toLowerCase().endsWith(".mp4")
+    ) ?? files[0];
 
-      let source: Uint8Array;
+    console.log(`[hf] final MP4 received: ${video.filename} (${video.buffer.byteLength} bytes)`);
 
-      if (mp4Files.length) {
-        // Hugging Face streaming returns repeated snapshots of the same growing MP4.
-        // Keep the largest/latest snapshot instead of concatenating the snapshots.
-        source = mp4Files.reduce((largest, current) =>
-          current.buffer.byteLength >= largest.buffer.byteLength ? current : largest
-        ).buffer;
-        console.log(`[hf] using latest MP4 snapshot (${source.byteLength} bytes)`);
-      } else if (tsFiles.length) {
-        const total = tsFiles.reduce((sum, file) => sum + file.buffer.byteLength, 0);
-        source = new Uint8Array(total);
-        let offset = 0;
-        for (const file of tsFiles) {
-          source.set(file.buffer, offset);
-          offset += file.buffer.byteLength;
-        }
-        console.log(`[hf] combined ${tsFiles.length} MPEG-TS chunks (${source.byteLength} bytes)`);
-      } else {
-        source = files[files.length - 1].buffer;
-      }
-
-      await writeFile(inputPath, source);
-      await runFfmpeg(["-y", "-i", inputPath, "-c", "copy", "-movflags", "+faststart", mp4Path]);
-      const buffer = new Uint8Array(await readFile(mp4Path));
-
-      return {
-        status: "completed",
-        buffer,
-        filename: "aivideotop.mp4",
-        mimeType: "video/mp4",
-        message: "Generated by Wan 2.1 Self-Forcing on Hugging Face ZeroGPU"
-      };
-    } finally {
-      await rm(workDir, { recursive: true, force: true });
-    }
+    return {
+      status: "completed",
+      buffer: video.buffer,
+      filename: "aivideotop.mp4",
+      mimeType: "video/mp4",
+      message: "Generated by Wan 2.1 Self-Forcing on Hugging Face ZeroGPU"
+    };
   }
 }
