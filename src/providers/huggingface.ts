@@ -29,7 +29,7 @@ async function toBuffer(value: unknown): Promise<{ buffer: Uint8Array; filename:
     return { buffer: value, filename: "aivideotop.mp4", mimeType: "video/mp4" };
   }
 
-  if (typeof value === "string" && /^https?:\\/\\//i.test(value)) {
+  if (typeof value === "string" && (value.startsWith("http://") || value.startsWith("https://"))) {
     const r = await fetch(value);
     if (!r.ok) throw new Error(`Failed to fetch generated media: ${r.status}`);
     return {
@@ -44,7 +44,7 @@ async function toBuffer(value: unknown): Promise<{ buffer: Uint8Array; filename:
   const url = value.url ?? value.path;
   if (!url) return null;
 
-  const absolute = /^https?:\\/\\//i.test(url)
+  const absolute = (url.startsWith("http://") || url.startsWith("https://"))
     ? url
     : `https://${SPACE_ID.replace("/", "-")}.hf.space${url.startsWith("/") ? url : `/${url}`}`;
 
