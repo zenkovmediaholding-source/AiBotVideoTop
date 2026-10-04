@@ -132,7 +132,7 @@ export class HuggingFaceProvider implements VideoProvider {
     try {
       await fs.writeFile(inputPath, combined);
       await new Promise<void>((resolve, reject) => {
-        execFile(ffmpegPath, ["-y", "-i", inputPath, "-c", "copy", "-movflags", "+faststart", outputPath], (error, _stdout, stderr) => {
+        execFile(String(ffmpegPath), ["-y", "-i", inputPath, "-c", "copy", "-movflags", "+faststart", outputPath], (error: Error | null, _stdout: string, stderr: string) => {
           if (error) {
             console.error("[hf] ffmpeg error:", stderr);
             reject(error);
