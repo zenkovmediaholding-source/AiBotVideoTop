@@ -1,7 +1,8 @@
 import type { VideoProvider, VideoRequest, GenerationResult } from "./types.js";
 
 const REPLICATE_API = "https://api.replicate.com/v1";
-const MODEL = "leonardoai/motion-2.0";
+const TEXT_MODEL = "leonardoai/motion-2.0";
+const REFERENCE_MODEL = "wan-video/wan-2.7-r2v";
 
 type Prediction = { id: string; status: string; output?: unknown; error?: unknown };
 
@@ -26,26 +27,34 @@ export class ReplicateProvider implements VideoProvider {
     const token = process.env.REPLICATE_API_TOKEN?.trim();
     if (!token) return { status: "unavailable", message: "Replicate не настроен: добавь REPLICATE_API_TOKEN в Render." };
 
-    const payload: Record<string, unknown> = {
-      input: {
-        prompt: input.prompt,
-        aspect_ratio: aspectRatio(input.ratio),
-        prompt_enhance: true,
-        frame_interpolation: true,
-        vibe_style: "None",
-        lighting_style: "None",
-        shot_type_style: "None",
-        color_theme_style: "None",
-      },
-    };
-    const videoInput = payload.input as Record<string, unknown>;
-    if (input.imageBuffer?.byteLength) {
-      videoInput.image =
-        "data:image/jpeg;base64," +
-        Buffer.from(input.imageBuffer).toString("base64");
-    }
+    const hasReference = Boolean(input.imageBuffer?.byteLength);
+    const MODEL = hasReference ? REFERENCE_MODEL : TEXT_MODEL;
+    const payload: Record<string, unknown> = hasReference
+      ? {
+          input: {
+            prompt: input.prompt,
+            reference_images: ["data:image/jpeg;base64," + Buffer.from(input.imageBuffer!).toString("base64")],
+            negative_prompt: "face distortion, identity change, extra limbs, deformed hands, blurry face, duplicate person, flicker, warped body, text, watermark",
+            resolution: "720p",
+            aspect_ratio: aspectRatio(input.ratio),
+            duration: Math.min(5, Math.max(2, input.duration ?? 5)),
+            shot_type: "single",
+          },
+        }
+      : {
+          input: {
+            prompt: input.prompt,
+            aspect_ratio: aspectRatio(input.ratio),
+            prompt_enhance: true,
+            frame_interpolation: true,
+            vibe_style: "None",
+            lighting_style: "None",
+            shot_type_style: "None",
+            color_theme_style: "None",
+          },
+        };
 
-    console.log("[replicate] starting " + MODEL);
+    console.log("[replicate] starting " + MODEL + (hasReference ? " with identity reference" : ""));
     const created = await fetch(REPLICATE_API + "/models/" + MODEL + "/predictions", {
       method: "POST",
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", Prefer: "wait=60" },
@@ -72,6 +81,6 @@ export class ReplicateProvider implements VideoProvider {
     if (!video.ok) throw new Error("Failed to download generated video: " + video.status);
     const buffer = new Uint8Array(await video.arrayBuffer());
     console.log("[replicate] completed " + prediction.id + ": " + buffer.byteLength + " bytes");
-    return { status: "completed", buffer, filename: "aivideotop.mp4", mimeType: "video/mp4", message: "Generated with Replicate " + MODEL + " ($0.30/video)" };
+    return { status: "completed", buffer, filename: "aivideotop.mp4", mimeType: "video/mp4", message: hasReference ? "Generated with Wan 2.7 R2V" : "Generated with Replicate " + MODEL + " ($0.30/video)" };
   }
 }
