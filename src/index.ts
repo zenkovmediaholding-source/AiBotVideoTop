@@ -67,7 +67,7 @@ const publicUrl=process.env.PUBLIC_URL?.replace(/\/$/,"");
 const webhookPath="/telegram/webhook";
 const handleWebhook=webhookCallback(bot,"http");
 const server=createServer(async(req,res)=>{
- if(req.url==="/health"){res.writeHead(200,{"content-type":"text/plain"});res.end("AiVideoTop OK");return;}
+ if(req.url==="/health"){res.writeHead(200,{"content-type":"text/plain"});res.end("AiVideoTop OK");return;}\n if(req.url==="/debug/hf" && process.env.AI_PROVIDER==="huggingface"){\n  try { const info=await (provider as HuggingFaceProvider).diagnose(); res.writeHead(200,{"content-type":"application/json"}); res.end(JSON.stringify({space:process.env.HF_SPACE_ID??"numanajmal0/wan-video-api",endpoint:"/generate",parameters:info})); }\n  catch(e){ res.writeHead(500,{"content-type":"application/json"}); res.end(JSON.stringify({error:e instanceof Error?e.message:String(e)})); }\n  return;\n }
  if(botMode==="webhook"&&req.method==="POST"&&req.url===webhookPath){await handleWebhook(req,res);return;}
  res.writeHead(200,{"content-type":"text/plain"});res.end("AiVideoTop");
 });
