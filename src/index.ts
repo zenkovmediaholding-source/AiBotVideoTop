@@ -63,7 +63,7 @@ bot.catch(err=>console.error("Bot error:",err.error));
 
 const port=Number(process.env.PORT??3000);
 const botMode=process.env.BOT_MODE??"polling";
-const publicUrl=process.env.PUBLIC_URL?.replace(/\\/$/,"");
+const publicUrl=process.env.PUBLIC_URL?.replace(/\/$/,"");
 const webhookPath="/telegram/webhook";
 const handleWebhook=webhookCallback(bot,"http");
 const server=createServer(async(req,res)=>{
