@@ -1,5 +1,27 @@
 import type { VideoProvider, VideoRequest, GenerationResult } from "./types.js";
 
+async function normalizePrompt(prompt: string): Promise<string> {
+  if (!/[А-Яа-яЁё]/.test(prompt)) return prompt;
+  const token = process.env.HF_TOKEN?.trim() || process.env.HUGGINGFACE_TOKEN?.trim();
+  if (!token) return prompt;
+  try {
+    const response = await fetch("https://api-inference.huggingface.co/models/Helsinki-NLP/opus-mt-ru-en", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      body: JSON.stringify({ inputs: prompt.slice(0, 1800) }),
+    });
+    if (!response.ok) return prompt;
+    const data = await response.json() as unknown;
+    const translated = Array.isArray(data) && data[0] && typeof data[0] === "object"
+      ? String((data[0] as Record<string, unknown>).translation_text ?? "")
+      : "";
+    if (!translated) return prompt;
+    return "Cinematic photorealistic video. " + translated + ". Natural human motion, realistic physics, consistent identity, smooth camera movement, detailed environment, no text or watermark.";
+  } catch {
+    return prompt;
+  }
+}
+
 const REPLICATE_API = "https://api.replicate.com/v1";
 const TEXT_MODEL = "leonardoai/motion-2.0";
 const REFERENCE_MODEL = "wan-video/wan-2.7-r2v";
@@ -28,11 +50,13 @@ export class ReplicateProvider implements VideoProvider {
     if (!token) return { status: "unavailable", message: "Replicate не настроен: добавь REPLICATE_API_TOKEN в Render." };
 
     const hasReference = Boolean(input.imageBuffer?.byteLength);
+    const prompt = await normalizePrompt(input.prompt);
+    console.log("[prompt] " + (prompt === input.prompt ? "using original prompt" : "translated Russian prompt to English"));
     const MODEL = hasReference ? REFERENCE_MODEL : TEXT_MODEL;
     const payload: Record<string, unknown> = hasReference
       ? {
           input: {
-            prompt: input.prompt,
+            prompt,
             reference_images: ["data:image/jpeg;base64," + Buffer.from(input.imageBuffer!).toString("base64")],
             negative_prompt: "face distortion, identity change, extra limbs, deformed hands, blurry face, duplicate person, flicker, warped body, text, watermark",
             resolution: "720p",
