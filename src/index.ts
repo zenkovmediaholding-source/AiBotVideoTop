@@ -3,15 +3,19 @@ import { createServer } from "node:http";
 import { Bot, InlineKeyboard, InputFile, type Context } from "grammy";
 import { DemoProvider } from "./providers/demo.js";
 import { ComfyUIProvider } from "./providers/comfyui.js";
+import { HuggingFaceProvider } from "./providers/huggingface.js";
 import { Database } from "./db.js";
 import type { VideoProvider } from "./providers/types.js";
 
 const token=process.env.TELEGRAM_BOT_TOKEN;
 if(!token) throw new Error("TELEGRAM_BOT_TOKEN is required");
 const bot=new Bot(token);
-const provider:VideoProvider=process.env.AI_PROVIDER==="comfyui"
- ? new ComfyUIProvider(process.env.COMFYUI_URL??"http://127.0.0.1:8188")
- : new DemoProvider();
+
+const provider:VideoProvider=
+ process.env.AI_PROVIDER==="huggingface" ? new HuggingFaceProvider() :
+ process.env.AI_PROVIDER==="comfyui" ? new ComfyUIProvider(process.env.COMFYUI_URL??"http://127.0.0.1:8188") :
+ new DemoProvider();
+
 const db=process.env.SUPABASE_URL&&process.env.SUPABASE_SERVICE_ROLE_KEY?new Database():null;
 type Session={mode:"video"|"photo"|"reference";ratio:string;duration:number;prompt?:string;imageFileId?:string};
 const sessions=new Map<number,Session>();
@@ -21,9 +25,11 @@ const back=()=>new InlineKeyboard().text("⬅️ Назад","home");
 const videoFormats=()=>new InlineKeyboard().text("📱 9:16","ratio_916").text("🖥 16:9","ratio_169").row().text("◼️ 1:1","ratio_11").row().text("⬅️ Назад","home");
 const videoDuration=()=>new InlineKeyboard().text("5 сек","dur_5").text("8 сек","dur_8").row().text("⬅️ Назад","home");
 const confirm=()=>new InlineKeyboard().text("🚀 Создать","generate").text("✏️ Изменить","edit_prompt").row().text("⬅️ Назад","home");
+
 async function ensureUser(ctx:Context){const u=ctx.from;if(!u||!db)return null;return db.upsertUser(u.id,u.username,u.first_name);}
 async function home(ctx:Context){await ensureUser(ctx);await ctx.reply("⚡️ <b>AiVideoTop</b>\n\nТвоя AI-студия для фото и видео.\n\nВыбери, что создать:",{parse_mode:"HTML",reply_markup:main()});}
 bot.command("start",home);
+
 bot.callbackQuery("video",async ctx=>{await ctx.answerCallbackQuery();if(ctx.from)sessions.set(ctx.from.id,{mode:"video",ratio:"9:16",duration:5});await ctx.reply("🎬 <b>AI Видео</b>\n\nВыбери формат:",{parse_mode:"HTML",reply_markup:videoFormats()});});
 bot.callbackQuery("photo",async ctx=>{await ctx.answerCallbackQuery();if(ctx.from)sessions.set(ctx.from.id,{mode:"photo",ratio:"1:1",duration:1});await ctx.reply("📸 <b>AI Фото</b>\n\nФотогенератор будет подключён следующим отдельным бесплатным модулем. Пока можно сразу использовать AI Видео.",{parse_mode:"HTML",reply_markup:back()});});
 bot.callbackQuery("reference",async ctx=>{await ctx.answerCallbackQuery();if(ctx.from)sessions.set(ctx.from.id,{mode:"reference",ratio:"9:16",duration:5});await ctx.reply("🧍 <b>Видео со мной</b>\n\nСначала пришли фотографию человека, которого нужно использовать как референс.",{parse_mode:"HTML"});});
@@ -46,7 +52,7 @@ bot.callbackQuery("generate",async ctx=>{
   if(result.buffer)await ctx.replyWithVideo(new InputFile(result.buffer,result.filename??"aivideotop.mp4"));
   else if(result.url)await ctx.replyWithVideo(result.url);
   else await ctx.reply("❌ <b>Генератор сейчас недоступен</b>\n\n"+escapeHtml(result.message??"AI-провайдер ещё не подключён."),{parse_mode:"HTML"});
- }catch(e){console.error(e);await ctx.reply("❌ Ошибка генерации. Проверь подключение GPU/ComfyUI.");}
+ }catch(e){console.error(e);await ctx.reply("❌ Ошибка генерации. Проверь подключение бесплатного GPU-провайдера.");}
  sessions.delete(ctx.from.id);
 });
 bot.callbackQuery("credits",async ctx=>{await ctx.answerCallbackQuery();const u=await ensureUser(ctx);await ctx.reply("💳 <b>Кредиты</b>\n\nБаланс: "+(u?.credits??0)+"\n\nПокупка кредитов подключим после появления платного генератора.",{parse_mode:"HTML",reply_markup:back()});});
@@ -54,6 +60,7 @@ bot.callbackQuery("history",async ctx=>{await ctx.answerCallbackQuery();const u=
 bot.callbackQuery("settings",async ctx=>{await ctx.answerCallbackQuery();await ctx.reply("⚙️ <b>Настройки</b>\n\nВидео: 9:16 • 5 сек\nWan 2.1 T2V 1.3B • 480P\n\nПозже добавим выбор модели и качества.",{parse_mode:"HTML",reply_markup:back()});});
 bot.callbackQuery("home",async ctx=>{await ctx.answerCallbackQuery();await home(ctx);});
 bot.catch(err=>console.error("Bot error:",err.error));
+
 const port=Number(process.env.PORT??3000);
 createServer((req,res)=>{if(req.url==="/health"){res.writeHead(200,{"content-type":"text/plain"});res.end("AiVideoTop OK");return;}res.writeHead(200,{"content-type":"text/plain"});res.end("AiVideoTop");}).listen(port,"0.0.0.0",()=>console.log("AiVideoTop health server listening on "+port));
 bot.start({onStart:info=>console.log("AiVideoTop started as @"+info.username)});
