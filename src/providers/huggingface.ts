@@ -54,7 +54,7 @@ async function toBuffer(value: unknown): Promise<{ buffer: Uint8Array; filename:
 
   return {
     buffer: new Uint8Array(await r.arrayBuffer()),
-    filename: value.orig_name ?? value.name ?? (url.endsWith(".ts") ? "chunk.ts" : "aivideotop.mp4"),
+    filename: value.orig_name ?? value.name ?? (url.endsWith(".ts") ? "chunk.ts" : "chunk.mp4"),
     mimeType: value.mime_type ?? r.headers.get("content-type") ?? (url.endsWith(".ts") ? "video/mp2t" : "video/mp4")
   };
 }
@@ -116,7 +116,7 @@ export class HuggingFaceProvider implements VideoProvider {
   async generateVideo(input: VideoRequest): Promise<GenerationResult> {
     const client = await this.clientPromise;
     const job = client.submit(ENDPOINT, [input.prompt, -1, 15]);
-    const chunks: Uint8Array[] = [];
+    const files: { buffer: Uint8Array; filename: string; mimeType?: string }[] = [];
     const seen = new Set<string>();
 
     console.log(`[hf] streaming ${SPACE_ID}${ENDPOINT}`);
@@ -137,30 +137,54 @@ export class HuggingFaceProvider implements VideoProvider {
           const key = `${item.filename}:${item.buffer.byteLength}:${item.buffer[0] ?? 0}`;
           if (!seen.has(key)) {
             seen.add(key);
-            chunks.push(item.buffer);
-            console.log(`[hf] received chunk ${chunks.length}: ${item.filename} (${item.buffer.byteLength} bytes)`);
+            files.push(item);
+            console.log(`[hf] received chunk ${files.length}: ${item.filename} (${item.buffer.byteLength} bytes)`);
           }
         }
       }
     }
 
-    if (!chunks.length) {
+    if (!files.length) {
       throw new Error("Hugging Face Self-Forcing returned no video chunks");
     }
 
     const workDir = await mkdtemp(join(tmpdir(), "aivideotop-"));
     try {
-      const tsPath = join(workDir, "input.ts");
+      const inputPath = join(workDir, "input.mp4");
       const mp4Path = join(workDir, "output.mp4");
-      const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
-      const combined = new Uint8Array(total);
-      let offset = 0;
-      for (const chunk of chunks) {
-        combined.set(chunk, offset);
-        offset += chunk.byteLength;
+      const mp4Files = files.filter(file =>
+        file.filename.toLowerCase().endsWith(".mp4") ||
+        file.mimeType?.toLowerCase().includes("mp4")
+      );
+      const tsFiles = files.filter(file =>
+        file.filename.toLowerCase().endsWith(".ts") ||
+        file.mimeType?.toLowerCase().includes("mpegts")
+      );
+
+      let source: Uint8Array;
+
+      if (mp4Files.length) {
+        // Hugging Face streaming returns repeated snapshots of the same growing MP4.
+        // Keep the largest/latest snapshot instead of concatenating the snapshots.
+        source = mp4Files.reduce((largest, current) =>
+          current.buffer.byteLength >= largest.buffer.byteLength ? current : largest
+        ).buffer;
+        console.log(`[hf] using latest MP4 snapshot (${source.byteLength} bytes)`);
+      } else if (tsFiles.length) {
+        const total = tsFiles.reduce((sum, file) => sum + file.buffer.byteLength, 0);
+        source = new Uint8Array(total);
+        let offset = 0;
+        for (const file of tsFiles) {
+          source.set(file.buffer, offset);
+          offset += file.buffer.byteLength;
+        }
+        console.log(`[hf] combined ${tsFiles.length} MPEG-TS chunks (${source.byteLength} bytes)`);
+      } else {
+        source = files[files.length - 1].buffer;
       }
-      await writeFile(tsPath, combined);
-      await runFfmpeg(["-y", "-i", tsPath, "-c", "copy", "-movflags", "+faststart", mp4Path]);
+
+      await writeFile(inputPath, source);
+      await runFfmpeg(["-y", "-i", inputPath, "-c", "copy", "-movflags", "+faststart", mp4Path]);
       const buffer = new Uint8Array(await readFile(mp4Path));
 
       return {
