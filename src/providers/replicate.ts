@@ -6,7 +6,8 @@ const MODEL = "leonardoai/motion-2.0";
 type Prediction = { id: string; status: string; output?: unknown; error?: unknown };
 
 function aspectRatio(ratio?: string): string {
-  if (ratio === "16:9" || ratio === "1:1") return ratio;
+  if (ratio === "16:9") return "16:9";
+  if (ratio === "1:1") return "4:5";
   return "9:16";
 }
 
@@ -27,8 +28,8 @@ export class ReplicateProvider implements VideoProvider {
 
     const payload: Record<string, unknown> = { input: {\n      prompt: input.prompt,\n      aspect_ratio: aspectRatio(input.ratio),\n      prompt_enhance: true,\n      frame_interpolation: true,\n      vibe_style: "None",\n      lighting_style: "None",\n      shot_type_style: "None",\n      color_theme_style: "None",\n    } };\n    const videoInput = payload.input as Record<string, unknown>;\n    if (input.imageBuffer?.byteLength) {\n      videoInput.image = "data:image/jpeg;base64," + Buffer.from(input.imageBuffer).toString("base64");\n    }
 
-    console.log("[replicate] starting " + model);
-    const created = await fetch(REPLICATE_API + "/models/" + model + "/predictions", {
+    console.log("[replicate] starting " + MODEL);
+    const created = await fetch(REPLICATE_API + "/models/" + MODEL + "/predictions", {
       method: "POST",
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", Prefer: "wait=60" },
       body: JSON.stringify(payload),
