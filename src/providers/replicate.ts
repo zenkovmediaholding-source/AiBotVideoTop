@@ -1,8 +1,7 @@
 import type { VideoProvider, VideoRequest, GenerationResult } from "./types.js";
 
 const REPLICATE_API = "https://api.replicate.com/v1";
-const TEXT_MODEL = "wan-video/wan-2.1-1.3b";
-const IMAGE_MODEL = "wavespeedai/wan-2.1-i2v-480p";
+const MODEL = "leonardoai/motion-2.0";
 
 type Prediction = { id: string; status: string; output?: unknown; error?: unknown };
 
@@ -26,19 +25,7 @@ export class ReplicateProvider implements VideoProvider {
     const token = process.env.REPLICATE_API_TOKEN?.trim();
     if (!token) return { status: "unavailable", message: "Replicate не настроен: добавь REPLICATE_API_TOKEN в Render." };
 
-    const hasImage = Boolean(input.imageBuffer?.byteLength);
-    const model = hasImage ? IMAGE_MODEL : TEXT_MODEL;
-    const payload: Record<string, unknown> = { input: { prompt: input.prompt } };
-    const videoInput = payload.input as Record<string, unknown>;
-    if (hasImage) {
-      videoInput.image = "data:image/jpeg;base64," + Buffer.from(input.imageBuffer!).toString("base64");
-    } else {
-      videoInput.frame_num = Math.min(81, Math.max(49, Math.round((input.duration ?? 5) * 16)));
-      videoInput.resolution = "480p";
-      videoInput.aspect_ratio = aspectRatio(input.ratio);
-      videoInput.sample_steps = 30;
-      videoInput.sample_guide_scale = 6;
-    }
+    const payload: Record<string, unknown> = { input: {\n      prompt: input.prompt,\n      aspect_ratio: aspectRatio(input.ratio),\n      prompt_enhance: true,\n      frame_interpolation: true,\n      vibe_style: "None",\n      lighting_style: "None",\n      shot_type_style: "None",\n      color_theme_style: "None",\n    } };\n    const videoInput = payload.input as Record<string, unknown>;\n    if (input.imageBuffer?.byteLength) {\n      videoInput.image = "data:image/jpeg;base64," + Buffer.from(input.imageBuffer).toString("base64");\n    }
 
     console.log("[replicate] starting " + model);
     const created = await fetch(REPLICATE_API + "/models/" + model + "/predictions", {
@@ -67,6 +54,6 @@ export class ReplicateProvider implements VideoProvider {
     if (!video.ok) throw new Error("Failed to download generated video: " + video.status);
     const buffer = new Uint8Array(await video.arrayBuffer());
     console.log("[replicate] completed " + prediction.id + ": " + buffer.byteLength + " bytes");
-    return { status: "completed", buffer, filename: "aivideotop.mp4", mimeType: "video/mp4", message: "Generated with Replicate " + model };
+    return { status: "completed", buffer, filename: "aivideotop.mp4", mimeType: "video/mp4", message: "Generated with Replicate " + MODEL + " ($0.30/video)" };
   }
 }
