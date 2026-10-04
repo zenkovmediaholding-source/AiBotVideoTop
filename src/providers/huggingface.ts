@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 import type { VideoProvider, VideoRequest, GenerationResult } from "./types.js";
 
-const SPACE_ID = process.env.HF_SPACE_ID ?? "multimodalart/self-forcing";
+const SPACE_ID = process.env.HF_SPACE_ID?.trim() || "multimodalart/self-forcing";
 const ENDPOINT = process.env.HF_ENDPOINT?.trim() || "/video_generation_handler_streaming";
 
 type ApiInfo = {
