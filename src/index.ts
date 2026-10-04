@@ -80,6 +80,6 @@ const port=Number(process.env.PORT??3000);
 createServer((req,res)=>{
  if(req.url==="/health"){res.writeHead(200,{"content-type":"text/plain"});res.end("AiVideoTop OK");return;}
  res.writeHead(200,{"content-type":"text/plain"});res.end("AiVideoTop");
-}).listen(port,()=>console.log(`AiVideoTop health server listening on ${port}`));
+}).listen(port,"0.0.0.0",()=>console.log(`AiVideoTop health server listening on ${port}`));
 
 bot.start({onStart:info=>console.log(`AiVideoTop started as @${info.username}`)});
