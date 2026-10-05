@@ -9,66 +9,477 @@ import { ReplicatePhotoProvider } from "./providers/replicate-photo.js";
 import { Database } from "./db.js";
 import type { VideoProvider } from "./providers/types.js";
 
-const token=process.env.TELEGRAM_BOT_TOKEN;
-if(!token) throw new Error("TELEGRAM_BOT_TOKEN is required");
-const bot=new Bot(token);
+const token = process.env.TELEGRAM_BOT_TOKEN;
+if (!token) throw new Error("TELEGRAM_BOT_TOKEN is required");
 
-const provider:VideoProvider=
- process.env.AI_PROVIDER==="replicate" ? new ReplicateProvider() :
- process.env.AI_PROVIDER==="huggingface" ? new HuggingFaceProvider() :
- process.env.AI_PROVIDER==="comfyui" ? new ComfyUIProvider(process.env.COMFYUI_URL??"http://127.0.0.1:8188") :
- new DemoProvider();
+const bot = new Bot(token);
 
-const db=process.env.SUPABASE_URL&&process.env.SUPABASE_SERVICE_ROLE_KEY?new Database():null;
-const photoProvider=new ReplicatePhotoProvider();
-type Session={mode:"video"|"photo"|"reference";ratio:string;duration:number;prompt?:string;imageFileId?:string};
-const sessions=new Map<number,Session>();
-const escapeHtml=(value:string)=>value.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-const safeAnswer=async(ctx:Context)=>{try{await ctx.answerCallbackQuery();}catch(e){const message=e instanceof Error?e.message:String(e);if(!message.includes("query is too old")&&!message.includes("query ID is invalid"))console.error("Callback answer error:",e);}};
-const main=()=>new InlineKeyboard().text("🎬 AI Видео","video").text("📸 AI Фото","photo").row().text("🧍 Видео со мной","reference").text("✨ Референс","reference").row().text("💳 Кредиты","credits").text("📁 История","history").row().text("⚙️ Настройки","settings");
-const back=()=>new InlineKeyboard().text("⬅️ Назад","home");
-const videoFormats=()=>new InlineKeyboard().text("📱 9:16","ratio_916").text("🖥 16:9","ratio_169").row().text("◼️ 1:1","ratio_11").row().text("⬅️ Назад","home");
-const videoDuration=()=>new InlineKeyboard().text("5 сек","dur_5").row().text("⬅️ Назад","home");
-const confirm=()=>new InlineKeyboard().text("🚀 Создать","generate").text("✏️ Изменить","edit_prompt").row().text("⬅️ Назад","home");
-const confirmPhoto=()=>new InlineKeyboard().text("🪄 Создать фото","generate_photo").text("✏️ Изменить","edit_photo").row().text("⬅️ Назад","home");
+const provider: VideoProvider =
+  process.env.AI_PROVIDER === "replicate" ? new ReplicateProvider() :
+  process.env.AI_PROVIDER === "huggingface" ? new HuggingFaceProvider() :
+  process.env.AI_PROVIDER === "comfyui" ? new ComfyUIProvider(process.env.COMFYUI_URL ?? "http://127.0.0.1:8188") :
+  new DemoProvider();
 
-async function ensureUser(ctx:Context){const u=ctx.from;if(!u||!db)return null;return db.upsertUser(u.id,u.username,u.first_name);}
-async function home(ctx:Context){await ensureUser(ctx);await ctx.reply("⚡️ <b>AiVideoTop</b>\n\nТвоя AI-студия для фото и видео.\n\nВыбери, что создать:",{parse_mode:"HTML",reply_markup:main()});}
-bot.command("start",home);
+const db = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY ? new Database() : null;
+const photoProvider = new ReplicatePhotoProvider();
 
-bot.callbackQuery("video",async ctx=>{await safeAnswer(ctx);if(ctx.from)sessions.set(ctx.from.id,{mode:"video",ratio:"9:16",duration:5});await ctx.reply("🎬 <b>AI Видео</b>\n\nВыбери формат:",{parse_mode:"HTML",reply_markup:videoFormats()});});
-bot.callbackQuery("photo",async ctx=>{await safeAnswer(ctx);if(ctx.from)sessions.set(ctx.from.id,{mode:"photo",ratio:"1:1",duration:1});await ctx.reply("📸 <b>AI Фото</b>\n\nНапиши, какое изображение создать.",{parse_mode:"HTML",reply_markup:back()});});
-bot.callbackQuery("reference",async ctx=>{await safeAnswer(ctx);if(ctx.from)sessions.set(ctx.from.id,{mode:"reference",ratio:"9:16",duration:5});await ctx.reply("🧍 <b>Видео со мной</b>\n\nСначала пришли фотографию человека, которого нужно использовать как референс.",{parse_mode:"HTML"});});
-bot.callbackQuery(/ratio_(.+)/,async ctx=>{await safeAnswer(ctx);const s=sessions.get(ctx.from.id);if(!s)return home(ctx);s.ratio=ctx.match[1]==="916"?"9:16":ctx.match[1]==="169"?"16:9":"1:1";sessions.set(ctx.from.id,s);await ctx.reply("⏱ Теперь выбери длительность:",{reply_markup:videoDuration()});});
-bot.callbackQuery(/dur_(.+)/,async ctx=>{await safeAnswer(ctx);const s=sessions.get(ctx.from.id);if(!s)return home(ctx);s.duration=Number(ctx.match[1]);sessions.set(ctx.from.id,s);await ctx.reply("✍️ Теперь напиши, что должно происходить в видео.",{reply_markup:back()});});
-bot.on("message:photo",async ctx=>{const s=sessions.get(ctx.from.id);if(!s||s.mode!=="reference"){await ctx.reply("Сначала выбери «🧍 Видео со мной».");return;}const photo=ctx.message.photo.at(-1);if(photo){s.imageFileId=photo.file_id;sessions.set(ctx.from.id,s);await ctx.reply("✅ Фото получено. Теперь напиши сцену для видео.",{reply_markup:back()});}});
-bot.on("message:text",async ctx=>{const prompt=ctx.message.text.trim();if(prompt.startsWith("/"))return;const s=sessions.get(ctx.from.id);if(!s){await home(ctx);return;}s.prompt=prompt;sessions.set(ctx.from.id,s);if(s.mode==="photo"){await ctx.reply("📝 <b>Проверь заказ</b>\n\n<b>Режим:</b> AI Фото\n<b>Формат:</b> "+s.ratio+"\n\n<b>Промпт:</b> "+escapeHtml(prompt.slice(0,700)),{parse_mode:"HTML",reply_markup:confirmPhoto()});return;}const mode=s.mode==="video"?"AI Видео":"Видео со мной";await ctx.reply("📝 <b>Проверь заказ</b>\n\n<b>Режим:</b> "+mode+"\n<b>Формат:</b> "+s.ratio+"\n<b>Длительность:</b> "+s.duration+" сек\n\n<b>Промпт:</b> "+escapeHtml(prompt.slice(0,700)),{parse_mode:"HTML",reply_markup:confirm()});});
-bot.callbackQuery("edit_prompt",async ctx=>{await safeAnswer(ctx);await ctx.reply("✏️ Напиши новый промпт:",{reply_markup:back()});});
-bot.callbackQuery("edit_photo",async ctx=>{await safeAnswer(ctx);await ctx.reply("✏️ Напиши новый промпт для фото:",{reply_markup:back()});});
-bot.callbackQuery("generate",async ctx=>{await safeAnswer(ctx);const s=sessions.get(ctx.from.id);if(!s?.prompt){await ctx.reply("Сначала нужен промпт.");return;}const u=await ensureUser(ctx);const prompt=s.prompt;await ctx.reply("⏳ <b>Запускаю генерацию...</b>\n\nЭто может занять несколько минут.",{parse_mode:"HTML"});const userId=ctx.from.id;void (async()=>{try{if(db&&u)await db.createGeneration(u.id,"video",prompt,process.env.AI_PROVIDER??"replicate");let imageBuffer:Uint8Array|undefined;if(s.imageFileId){const file=await bot.api.getFile(s.imageFileId);if(file.file_path){const media=await fetch("https://api.telegram.org/file/bot"+token+"/"+file.file_path);if(media.ok)imageBuffer=new Uint8Array(await media.arrayBuffer());}}const result=await provider.generateVideo({prompt,ratio:s.ratio,duration:s.duration,imageBuffer});if(result.buffer)await ctx.replyWithVideo(new InputFile(result.buffer,result.filename??"aivideotop.mp4"));else if(result.url)await ctx.replyWithVideo(result.url);else await ctx.reply("❌ Генератор сейчас недоступен.");}catch(e){console.error("[generate] error:",e);await ctx.reply("❌ Ошибка генерации. Проверь платный AI-провайдер.");}finally{sessions.delete(userId);}})();});
-bot.callbackQuery("credits",async ctx=>{await safeAnswer(ctx);const u=await ensureUser(ctx);await ctx.reply("💳 <b>Кредиты</b>\n\nБаланс: "+(u?.credits??0)+"\n\nПокупка кредитов подключим после появления платного генератора.",{parse_mode:"HTML",reply_markup:back()});});
-bot.callbackQuery("history",async ctx=>{await safeAnswer(ctx);const u=await ensureUser(ctx);if(!u||!db){await ctx.reply("📁 История временно недоступна.");return;}const rows=await db.listGenerations(u.id);if(!rows.length){await ctx.reply("📁 <b>История пуста</b>",{parse_mode:"HTML"});return;}await ctx.reply("📁 <b>Последние генерации</b>\n\n"+rows.map((x:any,i:number)=>(i+1)+". "+x.type+" • "+x.status+"\n"+escapeHtml(x.prompt?.slice(0,100)??"")).join("\n\n"),{parse_mode:"HTML",reply_markup:back()});});
-bot.callbackQuery("settings",async ctx=>{await safeAnswer(ctx);await ctx.reply("⚙️ <b>Настройки</b>\n\nВидео: 9:16 • 5 сек\nWan 2.1 T2V 1.3B • 480P\n\nПозже добавим выбор модели и качества.",{parse_mode:"HTML",reply_markup:back()});});
-bot.callbackQuery("home",async ctx=>{await safeAnswer(ctx);await home(ctx);});
-bot.catch(err=>console.error("Bot error:",err.error));
+type Session = {
+  mode: "video" | "photo" | "reference" | "reference_video";
+  ratio: string;
+  duration: number;
+  prompt?: string;
+  imageFileId?: string;
+  referenceVideoFileId?: string;
+};
 
-const port=Number(process.env.PORT??3000);
-const botMode=process.env.BOT_MODE??"polling";
-const publicUrl=process.env.PUBLIC_URL?.replace(/\/$/,"");
-const webhookPath="/telegram/webhook";
-const handleWebhook=webhookCallback(bot,"http",{timeoutMilliseconds:9000});
-const server=createServer(async(req,res)=>{
- if(req.url==="/health"){res.writeHead(200,{"content-type":"text/plain"});res.end("AiVideoTop OK");return;}
- if(botMode==="webhook"&&req.method==="POST"&&req.url===webhookPath){await handleWebhook(req,res);return;}
- res.writeHead(200,{"content-type":"text/plain"});res.end("AiVideoTop");
+const sessions = new Map<number, Session>();
+
+const escapeHtml = (value: string) =>
+  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+const safeAnswer = async (ctx: Context) => {
+  try {
+    await ctx.answerCallbackQuery();
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (!message.includes("query is too old") && !message.includes("query ID is invalid")) {
+      console.error("Callback answer error:", e);
+    }
+  }
+};
+
+const main = () => new InlineKeyboard()
+  .text("🎬 AI Видео", "video")
+  .text("📸 AI Фото", "photo")
+  .row()
+  .text("🧍 Видео со мной", "reference")
+  .text("🔥 Видео-референс", "reference_video")
+  .row()
+  .text("💳 Кредиты", "credits")
+  .text("📁 История", "history")
+  .row()
+  .text("⚙️ Настройки", "settings");
+
+const back = () => new InlineKeyboard().text("⬅️ Назад", "home");
+
+const videoFormats = () => new InlineKeyboard()
+  .text("📱 9:16", "ratio_916")
+  .text("🖥 16:9", "ratio_169")
+  .row()
+  .text("◼️ 1:1", "ratio_11")
+  .row()
+  .text("⬅️ Назад", "home");
+
+const videoDuration = () => new InlineKeyboard()
+  .text("⚡ 5 сек", "dur_5")
+  .text("🔥 10 сек", "dur_10")
+  .row()
+  .text("⬅️ Назад", "home");
+
+const confirm = () => new InlineKeyboard()
+  .text("🚀 Создать", "generate")
+  .text("✏️ Изменить", "edit_prompt")
+  .row()
+  .text("⬅️ Назад", "home");
+
+const confirmPhoto = () => new InlineKeyboard()
+  .text("🪄 Создать фото", "generate_photo")
+  .text("✏️ Изменить", "edit_photo")
+  .row()
+  .text("⬅️ Назад", "home");
+
+async function ensureUser(ctx: Context) {
+  const u = ctx.from;
+  if (!u || !db) return null;
+  return db.upsertUser(u.id, u.username, u.first_name);
+}
+
+async function downloadTelegramFile(fileId: string, fallbackMime: string) {
+  const file = await bot.api.getFile(fileId);
+  if (!file.file_path) throw new Error("Telegram file path is unavailable");
+  const media = await fetch("https://api.telegram.org/file/bot" + token + "/" + file.file_path);
+  if (!media.ok) throw new Error("Failed to download Telegram file: " + media.status);
+  const buffer = new Uint8Array(await media.arrayBuffer());
+  const lower = file.file_path.toLowerCase();
+  const mimeType = lower.endsWith(".webm") ? "video/webm" : lower.endsWith(".mov") ? "video/quicktime" : fallbackMime;
+  return { buffer, mimeType };
+}
+
+async function home(ctx: Context) {
+  await ensureUser(ctx);
+  await ctx.reply(
+    "⚡️ <b>AiVideoTop</b>\n\n" +
+    "AI-студия для фото и видео.\n\n" +
+    "🎬 Видео • 📸 Фото • 🧍 Видео со мной • 🔥 Видео-референс",
+    { parse_mode: "HTML", reply_markup: main() }
+  );
+}
+
+bot.command("start", home);
+
+bot.callbackQuery("video", async ctx => {
+  await safeAnswer(ctx);
+  if (ctx.from) sessions.set(ctx.from.id, { mode: "video", ratio: "9:16", duration: 5 });
+  await ctx.reply("🎬 <b>AI Видео</b>\n\nВыбери формат:", {
+    parse_mode: "HTML",
+    reply_markup: videoFormats()
+  });
 });
-server.listen(port,"0.0.0.0",async()=>{
- console.log("AiVideoTop health server listening on "+port);
- if(botMode==="webhook"){
-  if(!publicUrl) throw new Error("PUBLIC_URL is required in webhook mode");
-  await bot.api.setWebhook(publicUrl+webhookPath);
-  console.log("AiVideoTop webhook enabled at "+publicUrl+webhookPath);
- }else{
-  await bot.start({onStart:info=>console.log("AiVideoTop started as @"+info.username)});
- }
+
+bot.callbackQuery("photo", async ctx => {
+  await safeAnswer(ctx);
+  if (ctx.from) sessions.set(ctx.from.id, { mode: "photo", ratio: "1:1", duration: 1 });
+  await ctx.reply("📸 <b>AI Фото</b>\n\nНапиши, какое изображение создать.", {
+    parse_mode: "HTML",
+    reply_markup: back()
+  });
+});
+
+bot.callbackQuery("reference", async ctx => {
+  await safeAnswer(ctx);
+  if (ctx.from) sessions.set(ctx.from.id, { mode: "reference", ratio: "9:16", duration: 5 });
+  await ctx.reply(
+    "🧍 <b>Видео со мной</b>\n\n" +
+    "1. Пришли чёткое фото человека.\n" +
+    "2. Потом опиши сцену и движение.\n\n" +
+    "💡 Лучше использовать портрет/полный рост без сильных фильтров.",
+    { parse_mode: "HTML", reply_markup: back() }
+  );
+});
+
+bot.callbackQuery("reference_video", async ctx => {
+  await safeAnswer(ctx);
+  if (ctx.from) sessions.set(ctx.from.id, {
+    mode: "reference_video",
+    ratio: "9:16",
+    duration: 5
+  });
+  await ctx.reply(
+    "🔥 <b>Видео-референс</b>\n\n" +
+    "Пришли короткое видео-пример (лучше 2–10 сек).\n\n" +
+    "После него можно прислать своё фото — бот попробует сохранить его как дополнительный референс.\n\n" +
+    "⚠️ Это не точное копирование движения: модель создаёт новый ролик по референсам и описанию.",
+    { parse_mode: "HTML", reply_markup: back() }
+  );
+});
+
+bot.callbackQuery(/ratio_(.+)/, async ctx => {
+  await safeAnswer(ctx);
+  const s = sessions.get(ctx.from.id);
+  if (!s) return home(ctx);
+  s.ratio = ctx.match[1] === "916" ? "9:16" : ctx.match[1] === "169" ? "16:9" : "1:1";
+  sessions.set(ctx.from.id, s);
+  await ctx.reply("⏱ Теперь выбери длительность:", { reply_markup: videoDuration() });
+});
+
+bot.callbackQuery(/dur_(.+)/, async ctx => {
+  await safeAnswer(ctx);
+  const s = sessions.get(ctx.from.id);
+  if (!s) return home(ctx);
+  s.duration = Math.min(10, Math.max(2, Number(ctx.match[1]) || 5));
+  sessions.set(ctx.from.id, s);
+  await ctx.reply("✍️ Теперь напиши, что должно происходить в видео.", { reply_markup: back() });
+});
+
+bot.on("message:photo", async ctx => {
+  const s = sessions.get(ctx.from.id);
+  if (!s) {
+    await ctx.reply("Сначала выбери режим генерации.");
+    return;
+  }
+
+  if (s.mode === "reference" || s.mode === "reference_video") {
+    const photo = ctx.message.photo.at(-1);
+    if (photo) {
+      s.imageFileId = photo.file_id;
+      sessions.set(ctx.from.id, s);
+      await ctx.reply(
+        s.mode === "reference_video"
+          ? "✅ Фото добавлено. Теперь напиши, что нужно изменить в сцене и движении."
+          : "✅ Фото получено. Теперь напиши сцену для видео.",
+        { reply_markup: back() }
+      );
+    }
+    return;
+  }
+
+  await ctx.reply("Фото принимается только в режимах «🧍 Видео со мной» и «🔥 Видео-референс».");
+});
+
+bot.on("message:video", async ctx => {
+  const s = sessions.get(ctx.from.id);
+  if (!s || s.mode !== "reference_video") {
+    await ctx.reply("Сначала выбери «🔥 Видео-референс».");
+    return;
+  }
+
+  s.referenceVideoFileId = ctx.message.video.file_id;
+  sessions.set(ctx.from.id, s);
+  await ctx.reply(
+    "🎞 <b>Видео получено.</b>\n\n" +
+    "Если хочешь сохранить внешность конкретного человека — теперь пришли его фото.\n" +
+    "Если фото не нужно, просто напиши промпт.",
+    { parse_mode: "HTML", reply_markup: back() }
+  );
+});
+
+bot.on("message:text", async ctx => {
+  const prompt = ctx.message.text.trim();
+  if (prompt.startsWith("/")) return;
+
+  const s = sessions.get(ctx.from.id);
+  if (!s) {
+    await home(ctx);
+    return;
+  }
+
+  if (s.mode === "reference_video" && !s.referenceVideoFileId) {
+    await ctx.reply("Сначала пришли видео-пример для режима «🔥 Видео-референс».");
+    return;
+  }
+
+  s.prompt = prompt;
+  sessions.set(ctx.from.id, s);
+
+  if (s.mode === "photo") {
+    await ctx.reply(
+      "📝 <b>Проверь заказ</b>\n\n" +
+      "<b>Режим:</b> AI Фото\n" +
+      "<b>Формат:</b> " + s.ratio + "\n\n" +
+      "<b>Промпт:</b> " + escapeHtml(prompt.slice(0, 700)),
+      { parse_mode: "HTML", reply_markup: confirmPhoto() }
+    );
+    return;
+  }
+
+  const mode =
+    s.mode === "video" ? "AI Видео" :
+    s.mode === "reference" ? "Видео со мной" :
+    "🔥 Видео-референс";
+
+  await ctx.reply(
+    "📝 <b>Проверь заказ</b>\n\n" +
+    "<b>Режим:</b> " + mode + "\n" +
+    "<b>Формат:</b> " + s.ratio + "\n" +
+    "<b>Длительность:</b> " + s.duration + " сек\n" +
+    (s.imageFileId ? "<b>Фото:</b> добавлено\n" : "") +
+    (s.referenceVideoFileId ? "<b>Видео-референс:</b> добавлено\n" : "") +
+    "\n<b>Промпт:</b> " + escapeHtml(prompt.slice(0, 700)),
+    { parse_mode: "HTML", reply_markup: confirm() }
+  );
+});
+
+bot.callbackQuery("edit_prompt", async ctx => {
+  await safeAnswer(ctx);
+  await ctx.reply("✏️ Напиши новый промпт:", { reply_markup: back() });
+});
+
+bot.callbackQuery("edit_photo", async ctx => {
+  await safeAnswer(ctx);
+  await ctx.reply("✏️ Напиши новый промпт для фото:", { reply_markup: back() });
+});
+
+bot.callbackQuery("generate", async ctx => {
+  await safeAnswer(ctx);
+  const s = sessions.get(ctx.from.id);
+  if (!s?.prompt) {
+    await ctx.reply("Сначала нужен промпт.");
+    return;
+  }
+
+  const u = await ensureUser(ctx);
+  const prompt = s.prompt;
+  await ctx.reply(
+    "⏳ <b>Запускаю генерацию...</b>\n\n" +
+    "Режим: " + (s.mode === "reference_video" ? "🔥 видео-референс" : "🎬 видео") + "\n" +
+    "Формат: " + s.ratio + " • " + s.duration + " сек\n\n" +
+    "Это может занять несколько минут.",
+    { parse_mode: "HTML" }
+  );
+
+  const userId = ctx.from.id;
+
+  void (async () => {
+    try {
+      if (db && u) {
+        await db.createGeneration(
+          u.id,
+          "video",
+          prompt,
+          process.env.AI_PROVIDER ?? "replicate"
+        );
+      }
+
+      let imageBuffer: Uint8Array | undefined;
+      let imageMimeType: string | undefined;
+      let referenceVideoBuffer: Uint8Array | undefined;
+      let referenceVideoMimeType: string | undefined;
+
+      if (s.imageFileId) {
+        const media = await downloadTelegramFile(s.imageFileId, "image/jpeg");
+        imageBuffer = media.buffer;
+        imageMimeType = media.mimeType;
+      }
+
+      if (s.referenceVideoFileId) {
+        const media = await downloadTelegramFile(s.referenceVideoFileId, "video/mp4");
+        referenceVideoBuffer = media.buffer;
+        referenceVideoMimeType = media.mimeType;
+      }
+
+      const result = await provider.generateVideo({
+        prompt,
+        ratio: s.ratio,
+        duration: s.duration,
+        imageBuffer,
+        imageMimeType,
+        referenceVideoBuffer,
+        referenceVideoMimeType,
+      });
+
+      if (result.buffer) {
+        await ctx.replyWithVideo(new InputFile(result.buffer, result.filename ?? "aivideotop.mp4"));
+      } else if (result.url) {
+        await ctx.replyWithVideo(result.url);
+      } else {
+        await ctx.reply("❌ Генератор сейчас недоступен.");
+      }
+    } catch (e) {
+      console.error("[generate] error:", e);
+      await ctx.reply(
+        "❌ <b>Генерация не удалась.</b>\n\n" +
+        "Попробуй ещё раз с более коротким референсом и простым описанием сцены.",
+        { parse_mode: "HTML" }
+      );
+    } finally {
+      sessions.delete(userId);
+    }
+  })();
+});
+
+bot.callbackQuery("generate_photo", async ctx => {
+  await safeAnswer(ctx);
+  const s = sessions.get(ctx.from.id);
+  if (!s?.prompt || s.mode !== "photo") {
+    await ctx.reply("Сначала создай промпт для фото.");
+    return;
+  }
+
+  const u = await ensureUser(ctx);
+  const prompt = s.prompt;
+  await ctx.reply("⏳ <b>Создаю фото...</b>", { parse_mode: "HTML" });
+
+  void (async () => {
+    try {
+      if (db && u) {
+        await db.createGeneration(u.id, "photo", prompt, "replicate");
+      }
+
+      const result = await photoProvider.generatePhoto({
+        prompt,
+        ratio: s.ratio
+      });
+
+      if (result.buffer) {
+        await ctx.replyWithPhoto(new InputFile(result.buffer, result.filename ?? "aivideotop.webp"));
+      } else if (result.url) {
+        await ctx.replyWithPhoto(result.url);
+      } else {
+        await ctx.reply("❌ Генератор фото сейчас недоступен.");
+      }
+    } catch (e) {
+      console.error("[generate_photo] error:", e);
+      await ctx.reply("❌ Не удалось создать фото. Попробуй другой промпт.");
+    } finally {
+      sessions.delete(ctx.from.id);
+    }
+  })();
+});
+
+bot.callbackQuery("credits", async ctx => {
+  await safeAnswer(ctx);
+  const u = await ensureUser(ctx);
+  await ctx.reply(
+    "💳 <b>Кредиты</b>\n\n" +
+    "Баланс: " + (u?.credits ?? 0) + "\n\n" +
+    "Система оплаты подключается следующим этапом.",
+    { parse_mode: "HTML", reply_markup: back() }
+  );
+});
+
+bot.callbackQuery("history", async ctx => {
+  await safeAnswer(ctx);
+  const u = await ensureUser(ctx);
+  if (!u || !db) {
+    await ctx.reply("📁 История временно недоступна.");
+    return;
+  }
+
+  const rows = await db.listGenerations(u.id);
+  if (!rows.length) {
+    await ctx.reply("📁 <b>История пуста</b>", { parse_mode: "HTML" });
+    return;
+  }
+
+  await ctx.reply(
+    "📁 <b>Последние генерации</b>\n\n" +
+    rows.map((x: any, i: number) =>
+      (i + 1) + ". " + x.type + " • " + x.status + "\n" +
+      escapeHtml(x.prompt?.slice(0, 100) ?? "")
+    ).join("\n\n"),
+    { parse_mode: "HTML", reply_markup: back() }
+  );
+});
+
+bot.callbackQuery("settings", async ctx => {
+  await safeAnswer(ctx);
+  await ctx.reply(
+    "⚙️ <b>Настройки</b>\n\n" +
+    "Видео: 9:16 / 16:9 / 1:1\n" +
+    "Длительность: 5 / 10 сек\n" +
+    "Reference: Wan 2.7 R2V • до 1080p\n\n" +
+    "💡 Для Reels/TikTok лучше 9:16.",
+    { parse_mode: "HTML", reply_markup: back() }
+  );
+});
+
+bot.callbackQuery("home", async ctx => {
+  await safeAnswer(ctx);
+  await home(ctx);
+});
+
+bot.catch(err => console.error("Bot error:", err.error));
+
+const port = Number(process.env.PORT ?? 3000);
+const botMode = process.env.BOT_MODE ?? "polling";
+const publicUrl = process.env.PUBLIC_URL?.replace(/\/$/, "");
+const webhookPath = "/telegram/webhook";
+const handleWebhook = webhookCallback(bot, "http", { timeoutMilliseconds: 9000 });
+
+const server = createServer(async (req, res) => {
+  if (req.url === "/health") {
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("AiVideoTop OK");
+    return;
+  }
+
+  if (botMode === "webhook" && req.method === "POST" && req.url === webhookPath) {
+    await handleWebhook(req, res);
+    return;
+  }
+
+  res.writeHead(200, { "content-type": "text/plain" });
+  res.end("AiVideoTop");
+});
+
+server.listen(port, "0.0.0.0", async () => {
+  console.log("AiVideoTop health server listening on " + port);
+
+  if (botMode === "webhook") {
+    if (!publicUrl) throw new Error("PUBLIC_URL is required in webhook mode");
+    await bot.api.setWebhook(publicUrl + webhookPath);
+    console.log("AiVideoTop webhook enabled at " + publicUrl + webhookPath);
+  } else {
+    await bot.start({ onStart: info => console.log("AiVideoTop started as @" + info.username) });
+  }
 });
