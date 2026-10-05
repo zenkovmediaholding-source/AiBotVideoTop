@@ -49,7 +49,7 @@ export class ReplicateProvider implements VideoProvider {
     const token = process.env.REPLICATE_API_TOKEN?.trim();
     if (!token) return { status: "unavailable", message: "Replicate не настроен: добавь REPLICATE_API_TOKEN в Render." };
 
-    const hasImageReference = Boolean(input.imageBuffer?.byteLength);
+    const hasImageReference = Boolean(input.imageBuffer?.byteLength || input.imageBuffers?.length);
     const hasVideoReference = Boolean(input.referenceVideoBuffer?.byteLength);
     const hasReference = hasImageReference || hasVideoReference;
     const prompt = await normalizePrompt(input.prompt);
@@ -66,9 +66,14 @@ export class ReplicateProvider implements VideoProvider {
     };
 
     if (hasImageReference) {
-      refInput.reference_images = [
-        "data:" + (input.imageMimeType || "image/jpeg") + ";base64," + Buffer.from(input.imageBuffer!).toString("base64"),
-      ];
+      const refs = input.imageBuffers?.length
+        ? input.imageBuffers.slice(0, 3)
+        : input.imageBuffer
+          ? [{ buffer: input.imageBuffer, mimeType: input.imageMimeType || "image/jpeg" }]
+          : [];
+      refInput.reference_images = refs.map(ref =>
+        "data:" + ref.mimeType + ";base64," + Buffer.from(ref.buffer).toString("base64")
+      );
     }
     if (hasVideoReference) {
       refInput.reference_videos = [
