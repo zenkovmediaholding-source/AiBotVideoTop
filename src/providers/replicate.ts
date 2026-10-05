@@ -113,7 +113,7 @@ export class ReplicateProvider implements VideoProvider {
             type: ref.mimeType || "image/jpeg",
           })
         ),
-        resolution: "720p",
+        resolution: input.quality === "perfect" ? "1080p" : "720p",
         target_fps: "original",
         save_audio: true,
         ignore_audio: false,
