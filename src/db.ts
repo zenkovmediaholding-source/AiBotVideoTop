@@ -35,6 +35,12 @@ export class Database {
     return data;
   }
 
+  async hasFreeReferenceTest(userId:string){
+    const {count,error}=await this.client.from("generations").select("*",{count:"exact",head:true}).eq("user_id",userId).eq("provider","replicate:test");
+    if(error) throw error;
+    return (count ?? 0) > 0;
+  }
+
   async listGenerations(userId:string){
     const {data,error}=await this.client.from("generations").select("*").eq("user_id",userId).order("created_at",{ascending:false}).limit(10);
     if(error) throw error;
