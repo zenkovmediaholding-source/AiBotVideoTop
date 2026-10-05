@@ -436,6 +436,13 @@ bot.callbackQuery("generate_photo", async ctx => {
   }
 
   const u = await ensureUser(ctx);
+  if (quality === "test" && u && db) {
+    const alreadyUsed = await db.hasFreeReferenceTest(u.id);
+    if (alreadyUsed) {
+      await ctx.reply("🧪 Бесплатный тест уже использован. Для следующего запуска нужен режим 💎 Идеальное качество.");
+      return;
+    }
+  }
   const prompt = s.prompt;
   await ctx.reply("⏳ <b>Создаю фото...</b>", { parse_mode: "HTML" });
 
