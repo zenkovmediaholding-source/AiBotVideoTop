@@ -82,7 +82,7 @@ const videoDuration = () => new InlineKeyboard()
   .text("⬅️ Назад", "home");
 
 const qualityChoice = () => new InlineKeyboard()
-  .text("🧪 Бесплатный тест • 3 сек", "generate_test")
+  .text("🧪 Микро-тест • 1 сек", "generate_test")
   .row()
   .text("💎 Идеальное • 1080p", "generate_perfect")
   .row()
@@ -166,7 +166,7 @@ bot.callbackQuery("reference_video", async ctx => {
     "🔥 <b>Видео-референс</b>\n\n" +
     "Пришли короткое видео-пример (лучше 2–10 сек).\n\n" +
     "После него пришли 1–3 своих фото. Бот заменит человека в исходном видео, сохранив сцену, движение, камеру и звук.\n\n" +
-    "🧪 Сначала запускаем короткий бесплатный тест. Если результат тебя устраивает — используем идеальный режим 1080p.",
+    "🧪 Сначала запускаем микро-тест на той же модели. Он стоит копейки и показывает реальное качество замены. Если результат устраивает — оплачиваешь только финальный 1080p.",
     { parse_mode: "HTML", reply_markup: back() }
   );
 });
@@ -275,7 +275,7 @@ bot.on("message:text", async ctx => {
     (s.referenceVideoFileId ? "<b>Видео-референс:</b> добавлено\n" : "") +
     "\n<b>Промпт:</b> " + escapeHtml(prompt.slice(0, 700)) + "\n\n" +
     (s.mode === "reference_video"
-      ? "\n💡 <b>Сначала выбери бесплатный тест.</b> Он реально прогоняет замену человека через ту же модель, но только первые 3 секунды.\n\nПосле проверки можно запускать <b>1080p</b>."
+      ? "\n💡 <b>Сначала выбери бесплатный тест.</b> Он реально прогоняет замену человека через ту же модель, но только 1 секунду.\n\nПосле проверки можно запускать <b>1080p</b>."
       : ""),
     { parse_mode: "HTML", reply_markup: qualityChoice() }
   );
@@ -316,6 +316,42 @@ async function trimVideoForTest(input: Uint8Array, seconds: number): Promise<Uin
   }
 }
 
+const perfectPriceStars = (duration: number) => duration <= 5 ? 40 : 70;
+
+function perfectInvoiceText(duration: number) {
+  const stars = perfectPriceStars(duration);
+  return {
+    stars,
+    title: "AiVideoTop • 1080p",
+    description:
+      "Финальная замена человека в исходном видео. 1080p, исходное движение, камера, сцена и звук. " +
+      "До " + duration + " сек.",
+    payloadPrefix: "aivideotop:perfect:",
+  };
+}
+
+async function sendPerfectInvoice(ctx: Context, s: Session) {
+  const chatId = ctx.chat?.id;
+  if (!chatId || !ctx.from) throw new Error("Chat is unavailable");
+  const { stars, title, description, payloadPrefix } = perfectInvoiceText(s.duration);
+  const payload = payloadPrefix + ctx.from.id + ":" + Date.now();
+  await ctx.api.raw.sendInvoice({
+    chat_id: chatId,
+    title,
+    description,
+    payload,
+    currency: "XTR",
+    prices: [{ label: "1080p финал", amount: stars }],
+  });
+  await ctx.reply(
+    "💳 <b>Перед запуском финала</b>\\n\\n" +
+    "Цена: <b>" + stars + " ⭐</b> за " + s.duration + " сек.\\n" +
+    "Генерация запускается только после подтверждённой оплаты.\\n\\n" +
+    "Сначала обязательно посмотри микро-тест — он прогоняет ту же модель на 1 секунде.",
+    { parse_mode: "HTML" }
+  );
+}
+
 async function runVideoGeneration(ctx: Context, s: Session, quality: "test" | "perfect") {
   if (!s.prompt) {
     await ctx.reply("Сначала нужен промпт.");
@@ -326,14 +362,14 @@ async function runVideoGeneration(ctx: Context, s: Session, quality: "test" | "p
   if (quality === "test" && u && db) {
     const alreadyUsed = await db.hasFreeReferenceTest(u.id);
     if (alreadyUsed) {
-      await ctx.reply("🧪 Бесплатный тест уже использован. Для следующего запуска нужен режим 💎 Идеальное качество.");
+      await ctx.reply("🧪 Микро-тест уже использован. Для следующего запуска используй 💎 Финал 1080p.");
       return;
     }
   }
   const prompt = s.prompt;
   const userId = ctx.from!.id;
   const isReference = s.mode === "reference_video";
-  const label = quality === "test" ? "🧪 бесплатный тест • 3 сек • 720p" : "💎 идеальное качество • 1080p";
+  const label = quality === "test" ? "🧪 микро-тест • 1 сек • 720p" : "💎 финал • 1080p";
   await ctx.reply(
     "⏳ <b>Запускаю " + label + "...</b>\n\n" +
     (isReference ? "Замена человека по твоим фото.\n" : "AI-видео.\n") +
@@ -376,7 +412,7 @@ async function runVideoGeneration(ctx: Context, s: Session, quality: "test" | "p
       const result = await provider.generateVideo({
         prompt,
         ratio: s.ratio,
-        duration: quality === "test" ? 3 : s.duration,
+        duration: quality === "test" ? 1 : s.duration,
         imageBuffer,
         imageMimeType,
         imageBuffers,
@@ -423,7 +459,48 @@ bot.callbackQuery("generate_perfect", async ctx => {
     await ctx.reply("Сначала выбери «🔥 Видео-референс».");
     return;
   }
-  // Payment is intentionally not enforced yet: first we verify the full 1080p pipeline end-to-end.
+  try {
+    await sendPerfectInvoice(ctx, s);
+  } catch (e) {
+    console.error("[payment] invoice error:", e);
+    await ctx.reply("❌ Не удалось открыть оплату. Попробуй ещё раз.");
+  }
+});
+
+bot.on("pre_checkout_query", async ctx => {
+  try {
+    const payload = ctx.preCheckoutQuery.invoice_payload;
+    if (!payload.startsWith("aivideotop:perfect:")) {
+      await ctx.answerPreCheckoutQuery(false, "Неизвестный заказ.");
+      return;
+    }
+    await ctx.answerPreCheckoutQuery(true);
+  } catch (e) {
+    console.error("[payment] pre-checkout error:", e);
+    try {
+      await ctx.answerPreCheckoutQuery(false, "Не удалось подтвердить заказ.");
+    } catch {}
+  }
+});
+
+bot.on("message", async ctx => {
+  const payment = ctx.message.successful_payment;
+  if (!payment) return;
+
+  const payload = payment.invoice_payload;
+  const match = payload.match(/^aivideotop:perfect:(\\d+):\\d+$/);
+  if (!match || Number(match[1]) !== ctx.from.id) {
+    await ctx.reply("⚠️ Платёж получен, но заказ не удалось сопоставить. Напиши /start — разберём заказ вручную.");
+    return;
+  }
+
+  const s = sessions.get(ctx.from.id);
+  if (!s || s.mode !== "reference_video") {
+    await ctx.reply("✅ Оплата получена. Сессия заказа уже закрыта; напиши /start и мы восстановим заказ.");
+    return;
+  }
+
+  await ctx.reply("✅ <b>Оплата подтверждена.</b> Запускаю финальную генерацию 1080p.", { parse_mode: "HTML" });
   await runVideoGeneration(ctx, s, "perfect");
 });
 
@@ -472,7 +549,7 @@ bot.callbackQuery("credits", async ctx => {
   await ctx.reply(
     "💳 <b>Кредиты</b>\n\n" +
     "Баланс: " + (u?.credits ?? 0) + "\n\n" +
-    "Система оплаты подключается следующим этапом.",
+    "Финал 1080p оплачивается через Telegram Stars после микро-теста.",
     { parse_mode: "HTML", reply_markup: back() }
   );
 });
@@ -507,7 +584,7 @@ bot.callbackQuery("settings", async ctx => {
     "⚙️ <b>Настройки</b>\n\n" +
     "Видео: 9:16 / 16:9 / 1:1\n" +
     "Длительность: 5 / 10 сек\n" +
-    "Reference: P-Video-Replace • 720p тест / 1080p финал\n\n" +
+    "Reference: P-Video-Replace • 1 сек микро-тест / 1080p финал\n\n" +
     "💡 Для Reels/TikTok лучше 9:16.",
     { parse_mode: "HTML", reply_markup: back() }
   );
