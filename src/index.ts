@@ -277,7 +277,7 @@ bot.on("message:text", async ctx => {
     (s.mode === "reference_video"
       ? "\n💡 <b>Сначала выбери бесплатный тест.</b> Он реально прогоняет замену человека через ту же модель, но только первые 3 секунды.\n\nПосле проверки можно запускать <b>1080p</b>."
       : ""),
-    { parse_mode: "HTML", reply_markup: s.mode === "reference_video" ? qualityChoice() : confirm() }
+    { parse_mode: "HTML", reply_markup: qualityChoice() }
   );
 });
 
