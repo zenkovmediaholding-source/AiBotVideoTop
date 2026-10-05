@@ -1,3 +1,4 @@
+import Replicate from "replicate";
 import type { VideoProvider, VideoRequest, GenerationResult } from "./types.js";
 
 async function normalizePrompt(prompt: string): Promise<string> {
@@ -16,30 +17,29 @@ async function normalizePrompt(prompt: string): Promise<string> {
       ? String((data[0] as Record<string, unknown>).translation_text ?? "")
       : "";
     if (!translated) return prompt;
-    return "Cinematic photorealistic video. " + translated + ". Natural human motion, realistic physics, consistent identity, smooth camera movement, detailed environment, no text or watermark.";
+    return "Cinematic photorealistic video. " + translated + ". Natural human motion, realistic physics, consistent identity, smooth camera movement, detailed environment, no text, no captions, no watermark.";
   } catch {
     return prompt;
   }
 }
 
-const REPLICATE_API = "https://api.replicate.com/v1";
-const TEXT_MODEL = "leonardoai/motion-2.0";
-const REFERENCE_MODEL = "wan-video/wan-2.7-r2v";
+type FileLike = { url?: () => string };
 
-type Prediction = { id: string; status: string; output?: unknown; error?: unknown };
-
-function aspectRatio(ratio?: string): string {
-  if (ratio === "16:9") return "16:9";
-  if (ratio === "1:1") return "4:5";
-  return "9:16";
-}
-
-function outputUrl(output: unknown): string | undefined {
+function getOutputUrl(output: unknown): string | undefined {
   if (typeof output === "string") return output;
-  if (Array.isArray(output)) { for (const item of output) { const url = outputUrl(item); if (url) return url; } }
+  if (Array.isArray(output)) {
+    for (const item of output) {
+      const url = getOutputUrl(item);
+      if (url) return url;
+    }
+  }
   if (output && typeof output === "object") {
     const obj = output as Record<string, unknown>;
-    for (const key of ["url", "video", "output"]) { const url = outputUrl(obj[key]); if (url) return url; }
+    if (typeof obj.url === "function") return (obj.url as () => string)();
+    for (const key of ["url", "video", "output"]) {
+      const url = getOutputUrl(obj[key]);
+      if (url) return url;
+    }
   }
   return undefined;
 }
@@ -47,104 +47,96 @@ function outputUrl(output: unknown): string | undefined {
 export class ReplicateProvider implements VideoProvider {
   async generateVideo(input: VideoRequest): Promise<GenerationResult> {
     const token = process.env.REPLICATE_API_TOKEN?.trim();
-    if (!token) return { status: "unavailable", message: "Replicate не настроен: добавь REPLICATE_API_TOKEN в Render." };
+    if (!token) {
+      return { status: "unavailable", message: "Replicate не настроен: добавь REPLICATE_API_TOKEN в Render." };
+    }
 
     const hasImageReference = Boolean(input.imageBuffer?.byteLength || input.imageBuffers?.length);
     const hasVideoReference = Boolean(input.referenceVideoBuffer?.byteLength);
-    const hasReference = hasImageReference || hasVideoReference;
+
+    if (hasImageReference && hasVideoReference) {
+      return this.generateReferenceReplacement(input, token);
+    }
+
+    // Text/image-to-video fallback for ordinary generation.
+    const replicate = new Replicate({ auth: token });
     const prompt = await normalizePrompt(input.prompt);
-    console.log("[prompt] " + (prompt === input.prompt ? "using original prompt" : "translated Russian prompt to English"));
-
-    const MODEL = hasReference ? REFERENCE_MODEL : TEXT_MODEL;
-    const refInput: Record<string, unknown> = {
-      prompt,
-      negative_prompt: "face distortion, identity change, extra limbs, deformed hands, duplicate person, flicker, warped body, blurry face, unstable background, text, watermark",
-      resolution: "1080p",
-      aspect_ratio: aspectRatio(input.ratio),
-      duration: Math.min(10, Math.max(2, input.duration ?? 5)),
-      shot_type: "single",
-    };
-
-    if (hasImageReference) {
-      const refs = input.imageBuffers?.length
-        ? input.imageBuffers.slice(0, 3)
-        : input.imageBuffer
-          ? [{ buffer: input.imageBuffer, mimeType: input.imageMimeType || "image/jpeg" }]
-          : [];
-      refInput.reference_images = refs.map(ref =>
-        "data:" + ref.mimeType + ";base64," + Buffer.from(ref.buffer).toString("base64")
-      );
-    }
-    if (hasVideoReference) {
-      refInput.reference_videos = [
-        "data:" + (input.referenceVideoMimeType || "video/mp4") + ";base64," + Buffer.from(input.referenceVideoBuffer!).toString("base64"),
-      ];
-    }
-
-    const payload: Record<string, unknown> = hasReference
-      ? { input: refInput }
-      : {
-          input: {
-            prompt: input.prompt,
-            aspect_ratio: aspectRatio(input.ratio),
-            prompt_enhance: true,
-            frame_interpolation: true,
-            vibe_style: "None",
-            lighting_style: "None",
-            shot_type_style: "None",
-            color_theme_style: "None",
-          },
-        };
-
-    console.log("[replicate] starting " + MODEL + (hasReference ? " with reference media" : ""));
-    const created = await fetch(REPLICATE_API + "/models/" + MODEL + "/predictions", {
-      method: "POST",
-      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", Prefer: "wait=60" },
-      body: JSON.stringify(payload),
+    const output = await replicate.run("prunaai/p-video", {
+      input: {
+        prompt,
+        image: input.imageBuffer
+          ? new File([Buffer.from(input.imageBuffer)], "reference.jpg", { type: input.imageMimeType || "image/jpeg" })
+          : undefined,
+        duration: Math.min(10, Math.max(2, input.duration ?? 5)),
+        resolution: "720p",
+        aspect_ratio: input.ratio === "16:9" ? "16:9" : input.ratio === "1:1" ? "1:1" : "9:16",
+        save_audio: true,
+      },
     });
-    if (!created.ok) {
-      const body = await created.text();
-      throw new Error("Replicate create failed " + created.status + ": " + body.slice(0, 500));
-    }
 
-    let prediction = (await created.json()) as Prediction;
-    console.log("[replicate] prediction " + prediction.id + ": " + prediction.status);
-    const deadline = Date.now() + 10 * 60 * 1000;
-
-    while (!["succeeded", "failed", "canceled"].includes(prediction.status)) {
-      if (Date.now() > deadline) throw new Error("Replicate generation timed out");
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      const poll = await fetch(REPLICATE_API + "/predictions/" + prediction.id, {
-        headers: { Authorization: "Bearer " + token },
-      });
-      if (!poll.ok) {
-        const body = await poll.text();
-        throw new Error("Replicate poll failed " + poll.status + ": " + body.slice(0, 500));
-      }
-      prediction = (await poll.json()) as Prediction;
-      console.log("[replicate] " + prediction.id + ": " + prediction.status);
-    }
-
-    if (prediction.status !== "succeeded") {
-      throw new Error("Replicate generation " + prediction.status + ": " + String(prediction.error ?? "unknown error"));
-    }
-
-    const url = outputUrl(prediction.output);
+    const url = getOutputUrl(output);
     if (!url) throw new Error("Replicate returned no video URL");
-
     const video = await fetch(url);
     if (!video.ok) throw new Error("Failed to download generated video: " + video.status);
+    return {
+      status: "completed",
+      buffer: new Uint8Array(await video.arrayBuffer()),
+      filename: "aivideotop.mp4",
+      mimeType: "video/mp4",
+      message: "Generated with Replicate p-video",
+    };
+  }
+
+  private async generateReferenceReplacement(input: VideoRequest, token: string): Promise<GenerationResult> {
+    const replicate = new Replicate({ auth: token });
+    const refs = input.imageBuffers?.length
+      ? input.imageBuffers.slice(0, 3)
+      : input.imageBuffer
+        ? [{ buffer: input.imageBuffer, mimeType: input.imageMimeType || "image/jpeg" }]
+        : [];
+
+    if (!refs.length || !input.referenceVideoBuffer) {
+      throw new Error("Reference replacement requires both a source video and at least one identity photo.");
+    }
+
+    console.log("[replicate] starting prunaai/p-video-replace with source video + " + refs.length + " identity images");
+
+    const output = await replicate.run("prunaai/p-video-replace", {
+      input: {
+        video: new File(
+          [Buffer.from(input.referenceVideoBuffer)],
+          "source.mp4",
+          { type: input.referenceVideoMimeType || "video/mp4" }
+        ),
+        images: refs.map((ref, index) =>
+          new File([Buffer.from(ref.buffer)], "identity-" + (index + 1) + ".jpg", {
+            type: ref.mimeType || "image/jpeg",
+          })
+        ),
+        resolution: "720p",
+        target_fps: "original",
+        save_audio: true,
+        ignore_audio: false,
+        turbo: false,
+        instruction_prompt: "Replace the person in the source video with the person from the identity reference images. Preserve the original scene, camera movement, timing, body motion, clothing style, lighting and background as closely as possible. Keep the person's face and identity consistent throughout the entire clip. Do not add any text, captions, logos, subtitles or birthday message.",
+      },
+    });
+
+    const url = getOutputUrl(output);
+    if (!url) throw new Error("Replicate returned no replacement video URL");
+
+    const video = await fetch(url);
+    if (!video.ok) throw new Error("Failed to download replacement video: " + video.status);
 
     const buffer = new Uint8Array(await video.arrayBuffer());
-    console.log("[replicate] completed " + prediction.id + ": " + buffer.byteLength + " bytes");
+    console.log("[replicate] replacement completed: " + buffer.byteLength + " bytes");
+
     return {
       status: "completed",
       buffer,
-      filename: "aivideotop.mp4",
+      filename: "aivideotop-replaced.mp4",
       mimeType: "video/mp4",
-      message: hasReference
-        ? "Generated with Wan 2.7 R2V"
-        : "Generated with Replicate " + MODEL,
+      message: "Generated with Replicate p-video-replace",
     };
   }
 }
