@@ -49,22 +49,35 @@ export class ReplicateProvider implements VideoProvider {
     const token = process.env.REPLICATE_API_TOKEN?.trim();
     if (!token) return { status: "unavailable", message: "Replicate не настроен: добавь REPLICATE_API_TOKEN в Render." };
 
-    const hasReference = Boolean(input.imageBuffer?.byteLength);
+    const hasImageReference = Boolean(input.imageBuffer?.byteLength);
+    const hasVideoReference = Boolean(input.referenceVideoBuffer?.byteLength);
+    const hasReference = hasImageReference || hasVideoReference;
     const prompt = await normalizePrompt(input.prompt);
     console.log("[prompt] " + (prompt === input.prompt ? "using original prompt" : "translated Russian prompt to English"));
+
     const MODEL = hasReference ? REFERENCE_MODEL : TEXT_MODEL;
+    const refInput: Record<string, unknown> = {
+      prompt,
+      negative_prompt: "face distortion, identity change, extra limbs, deformed hands, duplicate person, flicker, warped body, blurry face, unstable background, text, watermark",
+      resolution: "1080p",
+      aspect_ratio: aspectRatio(input.ratio),
+      duration: Math.min(10, Math.max(2, input.duration ?? 5)),
+      shot_type: "single",
+    };
+
+    if (hasImageReference) {
+      refInput.reference_images = [
+        "data:" + (input.imageMimeType || "image/jpeg") + ";base64," + Buffer.from(input.imageBuffer!).toString("base64"),
+      ];
+    }
+    if (hasVideoReference) {
+      refInput.reference_videos = [
+        "data:" + (input.referenceVideoMimeType || "video/mp4") + ";base64," + Buffer.from(input.referenceVideoBuffer!).toString("base64"),
+      ];
+    }
+
     const payload: Record<string, unknown> = hasReference
-      ? {
-          input: {
-            prompt,
-            reference_images: ["data:image/jpeg;base64," + Buffer.from(input.imageBuffer!).toString("base64")],
-            negative_prompt: "face distortion, identity change, extra limbs, deformed hands, blurry face, duplicate person, flicker, warped body, text, watermark",
-            resolution: "720p",
-            aspect_ratio: aspectRatio(input.ratio),
-            duration: Math.min(5, Math.max(2, input.duration ?? 5)),
-            shot_type: "single",
-          },
-        }
+      ? { input: refInput }
       : {
           input: {
             prompt: input.prompt,
@@ -78,33 +91,55 @@ export class ReplicateProvider implements VideoProvider {
           },
         };
 
-    console.log("[replicate] starting " + MODEL + (hasReference ? " with identity reference" : ""));
+    console.log("[replicate] starting " + MODEL + (hasReference ? " with reference media" : ""));
     const created = await fetch(REPLICATE_API + "/models/" + MODEL + "/predictions", {
       method: "POST",
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", Prefer: "wait=60" },
       body: JSON.stringify(payload),
     });
-    if (!created.ok) { const body = await created.text(); throw new Error("Replicate create failed " + created.status + ": " + body.slice(0, 500)); }
+    if (!created.ok) {
+      const body = await created.text();
+      throw new Error("Replicate create failed " + created.status + ": " + body.slice(0, 500));
+    }
 
     let prediction = (await created.json()) as Prediction;
     console.log("[replicate] prediction " + prediction.id + ": " + prediction.status);
-    const deadline = Date.now() + 6 * 60 * 1000;
+    const deadline = Date.now() + 10 * 60 * 1000;
+
     while (!["succeeded", "failed", "canceled"].includes(prediction.status)) {
       if (Date.now() > deadline) throw new Error("Replicate generation timed out");
       await new Promise(resolve => setTimeout(resolve, 3000));
-      const poll = await fetch(REPLICATE_API + "/predictions/" + prediction.id, { headers: { Authorization: "Bearer " + token } });
-      if (!poll.ok) { const body = await poll.text(); throw new Error("Replicate poll failed " + poll.status + ": " + body.slice(0, 500)); }
+      const poll = await fetch(REPLICATE_API + "/predictions/" + prediction.id, {
+        headers: { Authorization: "Bearer " + token },
+      });
+      if (!poll.ok) {
+        const body = await poll.text();
+        throw new Error("Replicate poll failed " + poll.status + ": " + body.slice(0, 500));
+      }
       prediction = (await poll.json()) as Prediction;
       console.log("[replicate] " + prediction.id + ": " + prediction.status);
     }
-    if (prediction.status !== "succeeded") throw new Error("Replicate generation " + prediction.status + ": " + String(prediction.error ?? "unknown error"));
+
+    if (prediction.status !== "succeeded") {
+      throw new Error("Replicate generation " + prediction.status + ": " + String(prediction.error ?? "unknown error"));
+    }
 
     const url = outputUrl(prediction.output);
     if (!url) throw new Error("Replicate returned no video URL");
+
     const video = await fetch(url);
     if (!video.ok) throw new Error("Failed to download generated video: " + video.status);
+
     const buffer = new Uint8Array(await video.arrayBuffer());
     console.log("[replicate] completed " + prediction.id + ": " + buffer.byteLength + " bytes");
-    return { status: "completed", buffer, filename: "aivideotop.mp4", mimeType: "video/mp4", message: hasReference ? "Generated with Wan 2.7 R2V" : "Generated with Replicate " + MODEL + " ($0.30/video)" };
+    return {
+      status: "completed",
+      buffer,
+      filename: "aivideotop.mp4",
+      mimeType: "video/mp4",
+      message: hasReference
+        ? "Generated with Wan 2.7 R2V"
+        : "Generated with Replicate " + MODEL,
+    };
   }
 }
