@@ -28,7 +28,7 @@ type Session = {
   ratio: string;
   duration: number;
   prompt?: string;
-  imageFileId?: string;
+  imageFileIds?: string[];
   referenceVideoFileId?: string;
 };
 
@@ -157,7 +157,7 @@ bot.callbackQuery("reference_video", async ctx => {
   await ctx.reply(
     "🔥 <b>Видео-референс</b>\n\n" +
     "Пришли короткое видео-пример (лучше 2–10 сек).\n\n" +
-    "После него можно прислать своё фото — бот попробует сохранить его как дополнительный референс.\n\n" +
+    "После него можно прислать до 3 своих фото — бот использует их как референсы внешности.\n\n" +
     "⚠️ Это не точное копирование движения: модель создаёт новый ролик по референсам и описанию.",
     { parse_mode: "HTML", reply_markup: back() }
   );
@@ -191,12 +191,13 @@ bot.on("message:photo", async ctx => {
   if (s.mode === "reference" || s.mode === "reference_video") {
     const photo = ctx.message.photo.at(-1);
     if (photo) {
-      s.imageFileId = photo.file_id;
+      s.imageFileIds = [...(s.imageFileIds ?? []), photo.file_id].slice(0, 3);
       sessions.set(ctx.from.id, s);
+      const count = s.imageFileIds.length;
       await ctx.reply(
         s.mode === "reference_video"
-          ? "✅ Фото добавлено. Теперь напиши, что нужно изменить в сцене и движении."
-          : "✅ Фото получено. Теперь напиши сцену для видео.",
+          ? `✅ Фото ${count}/3 добавлено. Пришли ещё фото или напиши описание сцены и движения.`
+          : `✅ Фото ${count}/3 получено. Пришли ещё фото или напиши сцену для видео.`,
         { reply_markup: back() }
       );
     }
@@ -262,7 +263,7 @@ bot.on("message:text", async ctx => {
     "<b>Режим:</b> " + mode + "\n" +
     "<b>Формат:</b> " + s.ratio + "\n" +
     "<b>Длительность:</b> " + s.duration + " сек\n" +
-    (s.imageFileId ? "<b>Фото:</b> добавлено\n" : "") +
+    (s.imageFileIds?.length ? "<b>Фото:</b> " + s.imageFileIds.length + " шт.\n" : "") +
     (s.referenceVideoFileId ? "<b>Видео-референс:</b> добавлено\n" : "") +
     "\n<b>Промпт:</b> " + escapeHtml(prompt.slice(0, 700)),
     { parse_mode: "HTML", reply_markup: confirm() }
@@ -310,15 +311,19 @@ bot.callbackQuery("generate", async ctx => {
         );
       }
 
+      let imageBuffers: Array<{buffer: Uint8Array; mimeType: string}> = [];
       let imageBuffer: Uint8Array | undefined;
       let imageMimeType: string | undefined;
       let referenceVideoBuffer: Uint8Array | undefined;
       let referenceVideoMimeType: string | undefined;
 
-      if (s.imageFileId) {
-        const media = await downloadTelegramFile(s.imageFileId, "image/jpeg");
-        imageBuffer = media.buffer;
-        imageMimeType = media.mimeType;
+      for (const fileId of (s.imageFileIds ?? []).slice(0, 3)) {
+        const media = await downloadTelegramFile(fileId, "image/jpeg");
+        imageBuffers.push({ buffer: media.buffer, mimeType: media.mimeType });
+      }
+      if (imageBuffers[0]) {
+        imageBuffer = imageBuffers[0].buffer;
+        imageMimeType = imageBuffers[0].mimeType;
       }
 
       if (s.referenceVideoFileId) {
@@ -333,6 +338,7 @@ bot.callbackQuery("generate", async ctx => {
         duration: s.duration,
         imageBuffer,
         imageMimeType,
+        imageBuffers,
         referenceVideoBuffer,
         referenceVideoMimeType,
       });
