@@ -1,5 +1,9 @@
 import "dotenv/config";
 import { createServer } from "node:http";
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { writeFile, readFile, unlink } from "node:fs/promises";
+import ffmpegPath from "ffmpeg-static";
 import { Bot, InlineKeyboard, InputFile, webhookCallback, type Context } from "grammy";
 import { DemoProvider } from "./providers/demo.js";
 import { ComfyUIProvider } from "./providers/comfyui.js";
@@ -30,6 +34,7 @@ type Session = {
   prompt?: string;
   imageFileIds?: string[];
   referenceVideoFileId?: string;
+  quality?: "test" | "perfect";
 };
 
 const sessions = new Map<number, Session>();
@@ -76,8 +81,11 @@ const videoDuration = () => new InlineKeyboard()
   .row()
   .text("⬅️ Назад", "home");
 
-const confirm = () => new InlineKeyboard()
-  .text("🚀 Создать", "generate")
+const qualityChoice = () => new InlineKeyboard()
+  .text("🧪 Бесплатный тест • 3 сек", "generate_test")
+  .row()
+  .text("💎 Идеальное • 1080p", "generate_perfect")
+  .row()
   .text("✏️ Изменить", "edit_prompt")
   .row()
   .text("⬅️ Назад", "home");
@@ -157,8 +165,8 @@ bot.callbackQuery("reference_video", async ctx => {
   await ctx.reply(
     "🔥 <b>Видео-референс</b>\n\n" +
     "Пришли короткое видео-пример (лучше 2–10 сек).\n\n" +
-    "После него можно прислать до 3 своих фото — бот использует их как референсы внешности.\n\n" +
-    "⚠️ Это не точное копирование движения: модель создаёт новый ролик по референсам и описанию.",
+    "После него пришли 1–3 своих фото. Бот заменит человека в исходном видео, сохранив сцену, движение, камеру и звук.\n\n" +
+    "🧪 Сначала запускаем короткий бесплатный тест. Если результат тебя устраивает — используем идеальный режим 1080p.",
     { parse_mode: "HTML", reply_markup: back() }
   );
 });
@@ -265,8 +273,11 @@ bot.on("message:text", async ctx => {
     "<b>Длительность:</b> " + s.duration + " сек\n" +
     (s.imageFileIds?.length ? "<b>Фото:</b> " + s.imageFileIds.length + " шт.\n" : "") +
     (s.referenceVideoFileId ? "<b>Видео-референс:</b> добавлено\n" : "") +
-    "\n<b>Промпт:</b> " + escapeHtml(prompt.slice(0, 700)),
-    { parse_mode: "HTML", reply_markup: confirm() }
+    "\n<b>Промпт:</b> " + escapeHtml(prompt.slice(0, 700)) + "\n\n" +
+    (s.mode === "reference_video"
+      ? "\n💡 <b>Сначала выбери бесплатный тест.</b> Он реально прогоняет замену человека через ту же модель, но только первые 3 секунды.\n\nПосле проверки можно запускать <b>1080p</b>."
+      : ""),
+    { parse_mode: "HTML", reply_markup: s.mode === "reference_video" ? qualityChoice() : confirm() }
   );
 });
 
@@ -280,67 +291,91 @@ bot.callbackQuery("edit_photo", async ctx => {
   await ctx.reply("✏️ Напиши новый промпт для фото:", { reply_markup: back() });
 });
 
-bot.callbackQuery("generate", async ctx => {
-  await safeAnswer(ctx);
-  const s = sessions.get(ctx.from.id);
-  if (!s?.prompt) {
+async function trimVideoForTest(input: Uint8Array, seconds: number): Promise<Uint8Array> {
+  if (!ffmpegPath) throw new Error("FFmpeg is unavailable on Render");
+  const id = randomUUID();
+  const inputPath = `/tmp/aivideotop-${id}-in.mp4`;
+  const outputPath = `/tmp/aivideotop-${id}-out.mp4`;
+  await writeFile(inputPath, input);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn(ffmpegPath as string, [
+        "-y", "-i", inputPath, "-t", String(seconds),
+        "-map", "0:v:0", "-map", "0:a?",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+        "-c:a", "aac", "-movflags", "+faststart", outputPath
+      ]);
+      let stderr = "";
+      proc.stderr.on("data", d => { stderr += d.toString(); });
+      proc.on("error", reject);
+      proc.on("close", code => code === 0 ? resolve() : reject(new Error("FFmpeg trim failed: " + stderr.slice(-1200))));
+    });
+    return new Uint8Array(await readFile(outputPath));
+  } finally {
+    await Promise.allSettled([unlink(inputPath), unlink(outputPath)]);
+  }
+}
+
+async function runVideoGeneration(ctx: Context, s: Session, quality: "test" | "perfect") {
+  if (!s.prompt) {
     await ctx.reply("Сначала нужен промпт.");
     return;
   }
 
   const u = await ensureUser(ctx);
   const prompt = s.prompt;
+  const userId = ctx.from!.id;
+  const isReference = s.mode === "reference_video";
+  const label = quality === "test" ? "🧪 бесплатный тест • 3 сек • 720p" : "💎 идеальное качество • 1080p";
   await ctx.reply(
-    "⏳ <b>Запускаю генерацию...</b>\n\n" +
-    "Режим: " + (s.mode === "reference_video" ? "🔥 видео-референс" : "🎬 видео") + "\n" +
-    "Формат: " + s.ratio + " • " + s.duration + " сек\n\n" +
+    "⏳ <b>Запускаю " + label + "...</b>\\n\\n" +
+    (isReference ? "Замена человека по твоим фото.\\n" : "AI-видео.\\n") +
     "Это может занять несколько минут.",
     { parse_mode: "HTML" }
   );
 
-  const userId = ctx.from.id;
-
   void (async () => {
     try {
       if (db && u) {
-        await db.createGeneration(
-          u.id,
-          "video",
-          prompt,
-          process.env.AI_PROVIDER ?? "replicate"
-        );
+        await db.createGeneration(u.id, "video", prompt, process.env.AI_PROVIDER ?? "replicate");
       }
 
-      let imageBuffers: Array<{buffer: Uint8Array; mimeType: string}> = [];
-      let imageBuffer: Uint8Array | undefined;
-      let imageMimeType: string | undefined;
-      let referenceVideoBuffer: Uint8Array | undefined;
-      let referenceVideoMimeType: string | undefined;
-
+      const imageBuffers: Array<{buffer: Uint8Array; mimeType: string}> = [];
       for (const fileId of (s.imageFileIds ?? []).slice(0, 3)) {
         const media = await downloadTelegramFile(fileId, "image/jpeg");
         imageBuffers.push({ buffer: media.buffer, mimeType: media.mimeType });
       }
+
+      let imageBuffer: Uint8Array | undefined;
+      let imageMimeType: string | undefined;
       if (imageBuffers[0]) {
         imageBuffer = imageBuffers[0].buffer;
         imageMimeType = imageBuffers[0].mimeType;
       }
 
+      let referenceVideoBuffer: Uint8Array | undefined;
+      let referenceVideoMimeType: string | undefined;
       if (s.referenceVideoFileId) {
         const media = await downloadTelegramFile(s.referenceVideoFileId, "video/mp4");
         referenceVideoBuffer = media.buffer;
         referenceVideoMimeType = media.mimeType;
       }
 
+      if (isReference && referenceVideoBuffer && quality === "test") {
+        referenceVideoBuffer = await trimVideoForTest(referenceVideoBuffer, 3);
+        console.log("[test] source video trimmed to 3 seconds");
+      }
+
       const result = await provider.generateVideo({
         prompt,
         ratio: s.ratio,
-        duration: s.duration,
+        duration: quality === "test" ? 3 : s.duration,
         imageBuffer,
         imageMimeType,
         imageBuffers,
         referenceVideoBuffer,
         referenceVideoMimeType,
+        quality,
       });
 
       if (result.buffer) {
@@ -352,15 +387,37 @@ bot.callbackQuery("generate", async ctx => {
       }
     } catch (e) {
       console.error("[generate] error:", e);
+      const msg = e instanceof Error ? e.message : String(e);
       await ctx.reply(
-        "❌ <b>Генерация не удалась.</b>\n\n" +
-        "Попробуй ещё раз с более коротким референсом и простым описанием сцены.",
+        "❌ <b>Генерация не удалась.</b>\\n\\n" +
+        escapeHtml(msg.slice(0, 500)),
         { parse_mode: "HTML" }
       );
     } finally {
       sessions.delete(userId);
     }
   })();
+}
+
+bot.callbackQuery("generate_test", async ctx => {
+  await safeAnswer(ctx);
+  const s = sessions.get(ctx.from.id);
+  if (!s || s.mode !== "reference_video") {
+    await ctx.reply("Сначала выбери «🔥 Видео-референс».");
+    return;
+  }
+  await runVideoGeneration(ctx, s, "test");
+});
+
+bot.callbackQuery("generate_perfect", async ctx => {
+  await safeAnswer(ctx);
+  const s = sessions.get(ctx.from.id);
+  if (!s || s.mode !== "reference_video") {
+    await ctx.reply("Сначала выбери «🔥 Видео-референс».");
+    return;
+  }
+  // Payment is intentionally not enforced yet: first we verify the full 1080p pipeline end-to-end.
+  await runVideoGeneration(ctx, s, "perfect");
 });
 
 bot.callbackQuery("generate_photo", async ctx => {
@@ -443,7 +500,7 @@ bot.callbackQuery("settings", async ctx => {
     "⚙️ <b>Настройки</b>\n\n" +
     "Видео: 9:16 / 16:9 / 1:1\n" +
     "Длительность: 5 / 10 сек\n" +
-    "Reference: Wan 2.7 R2V • до 1080p\n\n" +
+    "Reference: P-Video-Replace • 720p тест / 1080p финал\n\n" +
     "💡 Для Reels/TikTok лучше 9:16.",
     { parse_mode: "HTML", reply_markup: back() }
   );
