@@ -323,13 +323,20 @@ async function runVideoGeneration(ctx: Context, s: Session, quality: "test" | "p
   }
 
   const u = await ensureUser(ctx);
+  if (quality === "test" && u && db) {
+    const alreadyUsed = await db.hasFreeReferenceTest(u.id);
+    if (alreadyUsed) {
+      await ctx.reply("🧪 Бесплатный тест уже использован. Для следующего запуска нужен режим 💎 Идеальное качество.");
+      return;
+    }
+  }
   const prompt = s.prompt;
   const userId = ctx.from!.id;
   const isReference = s.mode === "reference_video";
   const label = quality === "test" ? "🧪 бесплатный тест • 3 сек • 720p" : "💎 идеальное качество • 1080p";
   await ctx.reply(
-    "⏳ <b>Запускаю " + label + "...</b>\\n\\n" +
-    (isReference ? "Замена человека по твоим фото.\\n" : "AI-видео.\\n") +
+    "⏳ <b>Запускаю " + label + "...</b>\n\n" +
+    (isReference ? "Замена человека по твоим фото.\n" : "AI-видео.\n") +
     "Это может занять несколько минут.",
     { parse_mode: "HTML" }
   );
@@ -337,7 +344,7 @@ async function runVideoGeneration(ctx: Context, s: Session, quality: "test" | "p
   void (async () => {
     try {
       if (db && u) {
-        await db.createGeneration(u.id, "video", prompt, process.env.AI_PROVIDER ?? "replicate");
+        await db.createGeneration(u.id, "video", prompt, quality === "test" ? "replicate:test" : "replicate:perfect");
       }
 
       const imageBuffers: Array<{buffer: Uint8Array; mimeType: string}> = [];
@@ -389,7 +396,7 @@ async function runVideoGeneration(ctx: Context, s: Session, quality: "test" | "p
       console.error("[generate] error:", e);
       const msg = e instanceof Error ? e.message : String(e);
       await ctx.reply(
-        "❌ <b>Генерация не удалась.</b>\\n\\n" +
+        "❌ <b>Генерация не удалась.</b>\n\n" +
         escapeHtml(msg.slice(0, 500)),
         { parse_mode: "HTML" }
       );
