@@ -299,7 +299,7 @@ async function trimVideoForTest(input: Uint8Array, seconds: number): Promise<Uin
   await writeFile(inputPath, input);
   try {
     await new Promise<void>((resolve, reject) => {
-      const proc = spawn(ffmpegPath as string, [
+      const proc = spawn(ffmpegPath as unknown as string, [
         "-y", "-i", inputPath, "-t", String(seconds),
         "-map", "0:v:0", "-map", "0:a?",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
